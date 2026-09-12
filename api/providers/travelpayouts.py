@@ -1,19 +1,32 @@
 """Travelpayouts (Aviasales) Data API client, normalised into FareRow.
 
-Endpoint capabilities differ in ways that drive the whole scan strategy, so
-they are worth stating plainly:
+Endpoint behaviour, as **observed against the live API** rather than as
+documented — the two differ in ways that decide the whole scan strategy:
 
-    month-matrix     1 call/month, many rows per day split by stop count,
-                     but NO airline attribution.
-    calendar         1 call/month, exactly one (cheapest) row per day,
-                     WITH airline and flight number.
-    cheap            1 call/date, up to one row per stop count,
-                     WITH airline and flight number.
+    latest        1 call covers a whole YEAR with period_type="year" (142 dated
+                  one-way fares on a busy route). One-way prices, carries
+                  duration. No airline. The best breadth per call by far.
+    month-matrix  1 call/month, one row per date, one-way prices, carries
+                  duration. No airline. Coverage thins with distance: on
+                  DEL-DXB, 30/31 days in Oct but 20/31 in Dec.
+    cheap         1 call/date. Carries airline and flight number, but prices a
+                  ROUND TRIP with a provider-chosen return date.
+    calendar      Ignores the month it is given entirely — the same 26 rows come
+                  back for October, December, or any other input, spanning five
+                  months and priced as round trips. Kept here because the client
+                  method is tested and may be useful for airline attribution on
+                  scattered dates, but deliberately NOT used by the scanner.
 
-So no single endpoint gives both breadth and airline attribution, which is why
-`scan` fans out in tiers rather than calling one thing. See pipeline/scan.py.
+Two consequences worth holding onto:
 
-All prices here are cached observations, not live quotes. Every row carries the
+  * One-way and round-trip fares must never compete in the same ranking — the
+    numbers are not comparable. FareRow.return_date is what distinguishes them.
+  * No endpoint gives one-way prices WITH airline attribution, so an airline or
+    aircraft filter cannot be honoured across a one-way month scan. This is a
+    property of the data source, not a gap in the code, and the UI has to say so
+    rather than guess.
+
+All prices are cached observations, not live quotes. Every row carries the
 timestamp the fare was found so the UI can say how stale it is.
 """
 from __future__ import annotations
@@ -313,6 +326,7 @@ class TravelpayoutsClient:
             price=Decimal(str(value)),
             currency=currency,
             stops=int(entry.get("number_of_changes") or 0),
+            duration_minutes=entry.get("duration"),
             distance_km=entry.get("distance"),
             source=SOURCE,
             observed_at=_parse_dt(entry.get("found_at")) or fetched_at,
@@ -357,6 +371,9 @@ class TravelpayoutsClient:
             flight_number=_flight_number(airline, entry.get("flight_number")),
             departure_at=departure_at,
             return_at=return_at,
+            # duration_to is the outbound leg; duration covers the whole round
+            # trip, which would overstate a single leg.
+            duration_minutes=entry.get("duration_to") or entry.get("duration"),
             source=SOURCE,
             # These endpoints report no found_at, only an expiry, so the fetch
             # time is the best honest bound on freshness.

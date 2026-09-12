@@ -118,6 +118,37 @@ class TestBuildOptions:
         assert len(options) == 2
         assert all(o.kind == "one_way" for o in options)
 
+    def test_one_way_search_ignores_round_trip_fares(self, fare):
+        """The upstream cache mixes both, and a return price is roughly double."""
+        out = [
+            fare("2026-11-01", 20000),
+            fare("2026-11-02", 34000, return_date="2026-11-09"),
+        ]
+
+        options = datespace.build_options(out)
+
+        assert [o.depart_date for o in options] == [date(2026, 11, 1)]
+
+    def test_round_trip_returning_outside_the_inbound_range_is_dropped(self, fare):
+        """Trip length alone is not enough: the return must be when they asked."""
+        out = [fare("2026-11-01", 30000, return_date="2026-11-11")]
+        window = DateRange(start=date(2027, 1, 1), end=date(2027, 1, 31))
+
+        options = datespace.build_options(
+            out, [], min_nights=5, max_nights=15, inbound_range=window
+        )
+
+        assert options == []
+
+    def test_round_trip_inside_the_inbound_range_is_kept(self, fare):
+        out = [fare("2026-11-01", 30000, return_date="2027-01-10")]
+        window = DateRange(start=date(2027, 1, 1), end=date(2027, 1, 31))
+
+        options = datespace.build_options(out, [], inbound_range=window)
+
+        assert len(options) == 1
+        assert options[0].kind == "round_trip"
+
     def test_collapse_keeps_cheapest_per_cell(self, fare):
         out = [fare("2026-11-01", 20000, return_date="2026-11-05")]
         cheap = [fare("2026-11-01", 15000, return_date="2026-11-05")]

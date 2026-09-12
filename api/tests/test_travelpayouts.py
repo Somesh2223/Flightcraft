@@ -37,9 +37,11 @@ class TestBookingLink:
         assert link == "https://www.aviasales.com/search/DEL0901BOM1"
 
 
-@respx.mock
-@pytest.mark.asyncio
 class TestParsing:
+    # respx.mock must decorate each test, not the class: as a class decorator it
+    # replaces the class object and pytest stops collecting it entirely, so the
+    # suite passes by running nothing.
+    @respx.mock
     async def test_month_matrix_reads_stops_and_found_at(self, client):
         respx.get(f"{BASE}/v2/prices/month-matrix").mock(
             return_value=httpx.Response(
@@ -75,6 +77,7 @@ class TestParsing:
         assert row.airline is None
         assert row.observed_at.isoformat() == "2026-09-10T04:12:00+04:00"
 
+    @respx.mock
     async def test_calendar_reads_airline_and_flight_number(self, client):
         respx.get(f"{BASE}/v1/prices/calendar").mock(
             return_value=httpx.Response(
@@ -107,6 +110,7 @@ class TestParsing:
         assert row.stops == 0
         assert row.return_date is None
 
+    @respx.mock
     async def test_cheap_takes_stop_count_from_the_grouping_key(self, client):
         respx.get(f"{BASE}/v1/prices/cheap").mock(
             return_value=httpx.Response(
@@ -141,6 +145,69 @@ class TestParsing:
         assert by_stops[1].airline == "EK"
         assert by_stops[1].price == Decimal("38000")
 
+    @respx.mock
+    async def test_duration_is_captured_from_matrix_rows(self, client):
+        respx.get(f"{BASE}/v2/prices/month-matrix").mock(
+            return_value=httpx.Response(
+                200,
+                json={
+                    "success": True,
+                    "data": [
+                        {
+                            "origin": "DEL",
+                            "destination": "DXB",
+                            "depart_date": "2026-10-04",
+                            "return_date": "",
+                            "number_of_changes": 1,
+                            "value": 15463,
+                            "duration": 750,
+                            "distance": 2184,
+                            "found_at": "2026-09-06T15:43:32Z",
+                        }
+                    ],
+                },
+            )
+        )
+
+        async with client as c:
+            rows = await c.month_matrix("DEL", "DXB", date(2026, 10, 1))
+
+        assert rows[0].duration_minutes == 750
+        assert rows[0].distance_km == 2184
+
+    @respx.mock
+    async def test_cheap_prefers_outbound_duration_over_round_trip_total(self, client):
+        """`duration` covers the whole round trip and would overstate one leg."""
+        respx.get(f"{BASE}/v1/prices/cheap").mock(
+            return_value=httpx.Response(
+                200,
+                json={
+                    "success": True,
+                    "data": {
+                        "DXB": {
+                            "1": {
+                                "price": 26707,
+                                "airline": "AI",
+                                "flight_number": 2555,
+                                "departure_at": "2026-10-03T07:10:00+05:30",
+                                "return_at": "2026-10-31T22:05:00+04:00",
+                                "duration": 2415,
+                                "duration_to": 455,
+                                "duration_back": 450,
+                            }
+                        }
+                    },
+                },
+            )
+        )
+
+        async with client as c:
+            rows = await c.cheap("DEL", "DXB", date(2026, 10, 3))
+
+        assert rows[0].duration_minutes == 455
+        assert rows[0].is_round_trip
+
+    @respx.mock
     async def test_round_trip_rows_keep_their_return_date(self, client):
         respx.get(f"{BASE}/v2/prices/month-matrix").mock(
             return_value=httpx.Response(
@@ -169,6 +236,7 @@ class TestParsing:
         assert rows[0].is_round_trip
         assert rows[0].nights == 14
 
+    @respx.mock
     async def test_malformed_entries_are_skipped_not_fatal(self, client):
         respx.get(f"{BASE}/v2/prices/month-matrix").mock(
             return_value=httpx.Response(
@@ -196,6 +264,7 @@ class TestParsing:
 
         assert len(rows) == 1
 
+    @respx.mock
     async def test_month_matrix_range_clips_to_the_requested_window(self, client):
         from api.domain import DateRange
 
@@ -237,9 +306,8 @@ class TestParsing:
         ]
 
 
-@respx.mock
-@pytest.mark.asyncio
 class TestErrors:
+    @respx.mock
     async def test_api_level_failure_becomes_a_typed_error(self, client):
         respx.get(f"{BASE}/v1/prices/calendar").mock(
             return_value=httpx.Response(
@@ -251,6 +319,7 @@ class TestErrors:
             async with client as c:
                 await c.calendar("XXX", "LHR", date(2026, 11, 1))
 
+    @respx.mock
     async def test_missing_token_fails_with_a_useful_message(self):
         with pytest.raises(TravelpayoutsError, match="TRAVELPAYOUTS_TOKEN"):
             async with TravelpayoutsClient(token="", base_url=BASE) as c:

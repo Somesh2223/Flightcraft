@@ -13,7 +13,7 @@ from collections import defaultdict
 from datetime import date, timedelta
 from typing import Iterable, Sequence
 
-from api.domain import FareRow, TripOption
+from api.domain import DateRange, FareRow, TripOption
 
 
 def one_way_rows(rows: Iterable[FareRow]) -> list[FareRow]:
@@ -87,17 +87,29 @@ def build_options(
     inbound: Sequence[FareRow] | None = None,
     min_nights: int | None = None,
     max_nights: int | None = None,
+    inbound_range: DateRange | None = None,
 ) -> list[TripOption]:
     """All trip options for a scan, from both pairing and native round trips.
 
     Providers price some journeys as a single round-trip fare and others as two
     one-ways, and neither is reliably cheaper. Both are produced here and left
     for the ranker to sort out, so the traveller sees whichever actually wins.
+
+    Two rules keep the comparison honest, and both cost real correctness if
+    dropped — the upstream cache mixes one-way and round-trip fares freely, and
+    attaches return dates nobody asked for:
+
+    * A one-way search yields one-way fares only. A round-trip price is not an
+      answer to "what does it cost to fly out on the 4th", and showing one would
+      roughly double the apparent fare.
+    * A round-trip fare only qualifies if its return date falls inside the
+      requested inbound range. Checking trip length alone would offer a fare
+      returning in September to someone who asked to come back in January.
     """
     options: list[TripOption] = []
 
     if inbound is None:
-        options.extend(TripOption.from_fare(row) for row in outbound)
+        options.extend(TripOption.from_fare(row) for row in one_way_rows(outbound))
     else:
         options.extend(
             pair_one_ways(
@@ -106,8 +118,11 @@ def build_options(
         )
         for row in round_trip_rows(outbound):
             nights = row.nights
-            if nights is not None and _nights_ok(nights, min_nights, max_nights):
-                options.append(TripOption.from_fare(row))
+            if nights is None or not _nights_ok(nights, min_nights, max_nights):
+                continue
+            if inbound_range is not None and not inbound_range.contains(row.return_date):
+                continue
+            options.append(TripOption.from_fare(row))
 
     options.sort(key=lambda opt: (opt.total_price, opt.depart_date))
     return options

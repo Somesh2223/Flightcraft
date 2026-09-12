@@ -48,18 +48,35 @@ continuously, but not live quotes. Three consequences, stated plainly:
 
 ### Scan depth is a cost dial
 
-No single endpoint gives both month-wide breadth and airline attribution, so
-scanning happens in tiers:
-
 | Depth | Provider calls | What you get |
 |---|---|---|
-| `quick` | 1 per month per direction | One airline-attributed fare per day |
-| `standard` | 2 per month per direction | Adds every stop-count variant per day, unattributed |
-| `deep` | + 1 per date | Attributes an airline to each stop count |
+| `quick` | 1 per direction | `latest` with `period_type=year` — dated one-way fares across a whole year |
+| `standard` | + 1 per month per direction | Adds `month-matrix`: fresher, and covers some dates `latest` misses |
+| `deep` | + up to 20 | Tries to name airlines for the best date pairs |
 
-Airline, carrier-type and alliance filters can only be honoured where an airline
-is known, so the UI counts fares it had to hide for that reason and offers a
-deep re-scan rather than quietly showing fares that might not match.
+### What the live API actually does
+
+Measured against the real service, not the docs — several things differ, and
+each one changed the design:
+
+- **Prices are city-level.** A search for `LHR` returns rows stamped `LON`.
+  Comparing codes exactly made DEL–LHR look like a route with no fares at all;
+  comparing *city* codes fixes it while still excluding the neighbouring-city
+  fares the endpoint mixes in (a DXB search also returns Sharjah).
+- **`calendar` ignores the month it is given.** October, December, or anything
+  else returns the identical 26 rows spanning five months. It is not used.
+- **One-way and round-trip fares are mixed together** in the same responses, and
+  are not comparable. A one-way search must therefore discard round-trip fares
+  rather than show a roughly doubled price.
+- **Airline attribution is, in practice, unavailable.** The only endpoint that
+  names an airline (`cheap`) prices round trips, refuses any trip longer than
+  30 nights, and returns nothing at all for most date pairs. So the airline,
+  carrier-type and alliance filters work only on the rare attributed fare.
+  This is a property of the data source, not a gap in the code — see the
+  roadmap.
+
+Filters that need an airline reject unattributed fares rather than guess, and
+the count is reported separately so the UI can explain itself.
 
 ## Running it
 
@@ -112,11 +129,30 @@ Two ordering rules in the pipeline are load-bearing and easy to get wrong:
 
 ## Roadmap
 
+### Open question: airline attribution
+
+The airline and aircraft filters both need to know *which carrier* a given
+cached price belongs to, and Travelpayouts will not say. Three ways forward,
+none free and obvious:
+
+1. **A schedules source** (AeroDataBox, OAG) to learn which airlines fly a route,
+   then present airline choice as "who flies this" rather than "what each one
+   charges". Cheap, but it filters routes, not prices.
+2. **A second fare provider** for attributed prices on the shortlist only —
+   Ignav is self-serve at roughly $2 per 1,000 requests after 1,000 free, which
+   would cover a shortlist re-price at negligible cost.
+3. **Scope the feature down** to what the data supports: filter by stops, price,
+   duration and date, and drop per-airline filtering.
+
+Worth deciding before building Phase 3, since aircraft filtering inherits the
+same problem.
+
 Ordered roughly by value per unit of effort.
 
 - **Aircraft filters** — exact type, family, or category (widebody, four-engine,
   "fly it before it's gone"), from a route→equipment database built via
   AeroDataBox and OpenSky. Labelled with confidence, since equipment swaps.
+  Blocked on the attribution question above.
 - **True-cost pricing** — baggage, seat and meal fees folded in, so a ₹4,000
   budget fare plus a checked bag can correctly lose to a ₹5,200 full-service one.
 - **Layover intelligence** — connection times, terminal changes, self-transfer

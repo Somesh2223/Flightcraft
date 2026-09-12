@@ -139,6 +139,7 @@ class FareRow(BaseModel):
     flight_number: str | None = None
     departure_at: datetime | None = None
     return_at: datetime | None = None
+    duration_minutes: int | None = None
     distance_km: int | None = None
     source: str
     observed_at: datetime
@@ -251,3 +252,8 @@ class TripOption(BaseModel):
     def observed_at(self) -> datetime:
         """The oldest observation backing this option — its weakest link."""
         return min(leg.observed_at for leg in self.legs)
+
+    @property
+    def duration_minutes(self) -> int | None:
+        durations = [leg.duration_minutes for leg in self.legs]
+        return sum(durations) if all(d is not None for d in durations) else None
