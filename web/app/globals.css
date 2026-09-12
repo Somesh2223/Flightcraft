@@ -1,0 +1,61 @@
+@import "tailwindcss";
+
+:root {
+  --background: #0b0f14;
+  --surface: #121821;
+  --surface-raised: #18202b;
+  --border: #24303f;
+  --foreground: #e6edf5;
+  --muted: #8fa3b8;
+  --accent: #4cc2ff;
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-surface: var(--surface);
+  --color-surface-raised: var(--surface-raised);
+  --color-border-subtle: var(--border);
+  --color-foreground: var(--foreground);
+  --color-muted: var(--muted);
+  --color-accent: var(--accent);
+}
+
+html,
+body {
+  background: var(--background);
+  color: var(--foreground);
+}
+
+body {
+  font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  font-feature-settings: "tnum" 1;
+}
+
+::selection {
+  background: color-mix(in srgb, var(--accent) 35%, transparent);
+}
+
+input,
+select {
+  color-scheme: dark;
+}
+
+.input {
+  width: 100%;
+  border-radius: 0.5rem;
+  border: 1px solid var(--border);
+  background: var(--surface-raised);
+  padding: 0.5rem 0.75rem;
+  font-size: 0.875rem;
+  line-height: 1.25rem;
+  color: var(--foreground);
+}
+
+.input:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -1px;
+}
+
+.input::placeholder {
+  color: color-mix(in srgb, var(--muted) 70%, transparent);
+}
