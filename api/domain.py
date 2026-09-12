@@ -121,11 +121,47 @@ class SearchSpec(BaseModel):
         return self.inbound is not None
 
 
+class Segment(BaseModel):
+    """One flight, as a live-quoting provider describes it.
+
+    Only providers that quote real itineraries can fill these in; the cached
+    aggregate feeds know nothing below the level of a price and a date.
+    """
+
+    marketing_carrier: str
+    operating_carrier_name: str | None = None
+    flight_number: str
+    origin: str
+    destination: str
+    departure_local: datetime | None = None
+    arrival_local: datetime | None = None
+    departure_timezone: str | None = None
+    arrival_timezone: str | None = None
+    duration_minutes: int | None = None
+    aircraft: str | None = None
+
+    @property
+    def designator(self) -> str:
+        return f"{self.marketing_carrier}{self.flight_number}"
+
+
+class BookingLink(BaseModel):
+    provider_name: str
+    provider_type: str | None = None
+    price: Decimal | None = None
+    currency: str | None = None
+    url: str
+
+
 class FareRow(BaseModel):
     """One observed price for one dated journey, as a provider reported it.
 
     `return_date` set means the provider priced this as a round trip; the row
     then represents the whole trip rather than a single leg.
+
+    Fields below `segments` are only populated by live-quoting providers. The
+    cached feeds leave them empty, and the pipeline is built to work either way
+    — a filter that needs a segment simply cannot judge a row without one.
     """
 
     origin: str
@@ -144,6 +180,28 @@ class FareRow(BaseModel):
     source: str
     observed_at: datetime
     is_actual: bool = True
+
+    outbound_segments: list[Segment] = Field(default_factory=list)
+    inbound_segments: list[Segment] = Field(default_factory=list)
+    cabin_class: str | None = None
+    checked_bags: int | None = None
+    carry_on_bags: int | None = None
+    requires_self_transfer: bool = False
+    provider_ref: str | None = None
+    booking_links: list[BookingLink] = Field(default_factory=list)
+
+    @property
+    def segments(self) -> list[Segment]:
+        return self.outbound_segments + self.inbound_segments
+
+    @property
+    def is_live_quote(self) -> bool:
+        """Whether this came from a provider that priced a real itinerary."""
+        return bool(self.outbound_segments)
+
+    @property
+    def aircraft_types(self) -> list[str]:
+        return [s.aircraft for s in self.segments if s.aircraft]
 
     @field_validator("observed_at", "departure_at", "return_at")
     @classmethod

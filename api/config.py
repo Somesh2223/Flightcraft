@@ -22,6 +22,19 @@ TRAVELPAYOUTS_BASE_URL = os.getenv(
     "TRAVELPAYOUTS_BASE_URL", "https://api.travelpayouts.com"
 )
 
+# --- Ignav: live fares with exact airline, aircraft and booking links ---
+# 1,000 free requests, then $2 per 1,000. Only HTTP 200s are billable, so
+# retrying a transient failure costs nothing.
+IGNAV_API_KEY = os.getenv("IGNAV_API_KEY", "")
+IGNAV_BASE_URL = os.getenv("IGNAV_BASE_URL", "https://ignav.com/api")
+# A search takes ~10s; ten in parallel finished in about the same time, so
+# concurrency is what makes resolving a shortlist bearable.
+IGNAV_MAX_CONCURRENCY = int(os.getenv("IGNAV_MAX_CONCURRENCY", "10"))
+IGNAV_TIMEOUT_SECONDS = float(os.getenv("IGNAV_TIMEOUT_SECONDS", "45"))
+# How many candidate dates a scan resolves into exact itineraries. This is the
+# only setting that costs money: one request per date, so ~$0.02 a search.
+IGNAV_RESOLVE_LIMIT = int(os.getenv("IGNAV_RESOLVE_LIMIT", "10"))
+
 # --- Aircraft enrichment ---
 AERODATABOX_RAPIDAPI_KEY = os.getenv("AERODATABOX_RAPIDAPI_KEY", "")
 OPENSKY_CLIENT_ID = os.getenv("OPENSKY_CLIENT_ID", "")
