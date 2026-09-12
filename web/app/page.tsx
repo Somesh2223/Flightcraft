@@ -34,9 +34,9 @@ const CARRIER_CLASSES: { value: CarrierClass; label: string }[] = [
 ];
 
 const DEPTHS: { value: ScanDepth; label: string; hint: string }[] = [
-  { value: "quick", label: "Quick", hint: "1 call per month" },
-  { value: "standard", label: "Standard", hint: "adds every stop count" },
-  { value: "deep", label: "Deep", hint: "adds airline per date, ~1 call per day" },
+  { value: "quick", label: "Quick", hint: "a year of fares in 1 call" },
+  { value: "standard", label: "Standard", hint: "adds fresher per-month data" },
+  { value: "deep", label: "Deep", hint: "tries to name airlines, often can't" },
 ];
 
 export default function Home() {
