@@ -16,6 +16,20 @@ export interface Leg {
   observed_at: string;
 }
 
+export type Verdict = "exceptional" | "good" | "typical" | "high" | "unknown";
+export type Confidence = "none" | "low" | "medium" | "high";
+
+export interface PriceContext {
+  verdict: Verdict;
+  confidence: Confidence;
+  samples: number;
+  distinct_days: number;
+  percentile: number | null;
+  median: string | null;
+  cheapest_seen: string | null;
+  note: string;
+}
+
 export interface TripOption {
   kind: "one_way" | "round_trip" | "combined_one_ways";
   depart_date: string;
@@ -28,6 +42,7 @@ export interface TripOption {
   inbound: Leg | null;
   booking_link: string;
   observed_at: string;
+  price_context: PriceContext | null;
 }
 
 export interface CalendarCell {
@@ -52,8 +67,20 @@ export interface SearchResponse {
   filtered_out: Record<string, number>;
   needs_deep_scan: boolean;
   demo_mode: boolean;
+  observations_recorded: number;
   warnings: string[];
 }
+
+export const VERDICT_STYLE: Record<Verdict, { label: string; className: string }> = {
+  exceptional: {
+    label: "Unusually cheap",
+    className: "bg-emerald-400/20 text-emerald-200 ring-1 ring-emerald-400/40",
+  },
+  good: { label: "Good price", className: "bg-emerald-500/15 text-emerald-300" },
+  typical: { label: "Typical price", className: "bg-white/5 text-muted" },
+  high: { label: "Above usual", className: "bg-amber-500/15 text-amber-300" },
+  unknown: { label: "No history yet", className: "bg-white/5 text-muted" },
+};
 
 export interface DateRangeInput {
   start: string;

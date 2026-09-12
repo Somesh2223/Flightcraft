@@ -27,6 +27,10 @@ A single-date search is just a range of length one.
   carrier type (budget / full service / hybrid), alliance, price cap.
 - **Booking deep-links** to a live search, so the real current price is always
   one click away.
+- **Price history**, accumulating from every scan plus a daily sweep of ~24
+  popular Indian routes. Each result is scored against what that departure date
+  has cost before — good / typical / above usual, and an error-fare flag for
+  anything far below its own median.
 
 ## The data, and its honest limits
 
@@ -129,25 +133,26 @@ Two ordering rules in the pipeline are load-bearing and easy to get wrong:
 
 ## Roadmap
 
-### Open question: airline attribution
+### Airline attribution: the candidate-set approach
 
-The airline and aircraft filters both need to know *which carrier* a given
-cached price belongs to, and Travelpayouts will not say. Three ways forward,
-none free and obvious:
+Travelpayouts will not say which carrier a cached price belongs to. The reference
+data needed to work around it is, however, entirely free:
 
-1. **A schedules source** (AeroDataBox, OAG) to learn which airlines fly a route,
-   then present airline choice as "who flies this" rather than "what each one
-   charges". Cheap, but it filters routes, not prices.
-2. **A second fare provider** for attributed prices on the shortlist only —
-   Ignav is self-serve at roughly $2 per 1,000 requests after 1,000 free, which
-   would cover a shortlist re-price at negligible cost.
-3. **Scope the feature down** to what the data supports: filter by stops, price,
-   duration and date, and drop per-airline filtering.
+- **Who flies a route** — Wikipedia airport articles, OpenFlights, OpenSky.
+- **What aircraft operates a flight** — OpenSky ADS-B history, airline schedules.
+- **Carrier class and alliance** — already curated in `api/data/carriers.yaml`.
 
-Worth deciding before building Phase 3, since aircraft filtering inherits the
-same problem.
+So rather than claiming a fare belongs to one airline, the plan is to derive the
+**candidate set** for a route and stop count, and say so: *"one of IX, 6E or
+AI"*. The booking deep-link resolves it on click.
 
-Ordered roughly by value per unit of effort.
+This is honest about what is known and still delivers most of the value. "Which
+dates can I fly a widebody on this route" is answerable from schedules alone,
+which is the avgeek case. "The cheapest IndiGo fare in December" narrows to
+"dates where IndiGo is a candidate", which is weaker but useful — and no paid
+API or scraping is involved.
+
+### Ordered roughly by value per unit of effort
 
 - **Aircraft filters** — exact type, family, or category (widebody, four-engine,
   "fly it before it's gone"), from a route→equipment database built via
@@ -157,8 +162,9 @@ Ordered roughly by value per unit of effort.
   budget fare plus a checked bag can correctly lose to a ₹5,200 full-service one.
 - **Layover intelligence** — connection times, terminal changes, self-transfer
   risk, and transit-visa checks for the Indian passport.
-- **Price history** — percentile versus the last 90 days, a book-now-or-wait
-  signal, and error-fare detection. Needs weeks of accumulated scans to be useful.
+- **Booking curve** — median price by days-to-departure, so a route can say
+  "fares here usually bottom out 45-60 days out; you are at 80". The
+  observations are already being recorded for it; the analysis is not built.
 - **Miles and points** — the emphasis is airline and alliance redemptions, not
   card points. For one flight the engine compares every program the traveller
   holds (own-airline, alliance partner, non-alliance bilateral, or via a card

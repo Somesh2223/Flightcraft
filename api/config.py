@@ -41,6 +41,14 @@ FARE_CACHE_TTL_HOURS = int(os.getenv("FARE_CACHE_TTL_HOURS", "6"))
 PROVIDER_MAX_CONCURRENCY = int(os.getenv("PROVIDER_MAX_CONCURRENCY", "8"))
 PROVIDER_TIMEOUT_SECONDS = float(os.getenv("PROVIDER_TIMEOUT_SECONDS", "20"))
 
+# Daily sweep of popular routes, which is what makes the price history grow
+# whether or not anyone searches. Off without a token, since there is nothing
+# real to record.
+ENABLE_BACKGROUND_SCANS = os.getenv(
+    "ENABLE_BACKGROUND_SCANS", "true"
+).strip().lower() in ("1", "true", "yes")
+SWEEP_HOUR = int(os.getenv("SWEEP_HOUR", "3"))
+
 # Synthetic fares, so the app runs before a Travelpayouts token exists. Falls
 # back automatically rather than erroring, but every response says so.
 _DEMO_FLAG = os.getenv("FARELOOM_DEMO", "").strip().lower()

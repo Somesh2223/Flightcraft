@@ -1,21 +1,44 @@
 """Fareloom HTTP API."""
 from __future__ import annotations
 
+from contextlib import asynccontextmanager
+
 import httpx
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 
 from api import config
 from api.domain import SearchSpec
-from api.engines import datespace
+from apscheduler.schedulers.asyncio import AsyncIOScheduler
+
+from api.engines import datespace, history
+from api.jobs import popular
 from api.pipeline import filters
+from api.storage import db
 from api.pipeline.scan import ScanDepth, attribute_cells, estimate_calls, scan
 from api.providers.demo import DemoClient
 from api.providers.travelpayouts import TravelpayoutsClient, TravelpayoutsError
 from api.reference import carriers
 from api.schemas import CalendarCell, SearchRequest, SearchResponse, TripOptionOut
 
-app = FastAPI(title="Fareloom", version="0.1.0")
+@asynccontextmanager
+async def lifespan(_: FastAPI):
+    await db.init_db()
+
+    scheduler = None
+    if config.ENABLE_BACKGROUND_SCANS and not config.DEMO_MODE:
+        scheduler = AsyncIOScheduler()
+        popular.schedule(scheduler)
+        scheduler.start()
+
+    yield
+
+    if scheduler is not None:
+        scheduler.shutdown(wait=False)
+    await db.dispose()
+
+
+app = FastAPI(title="Fareloom", version="0.1.0", lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
@@ -148,7 +171,15 @@ async def search(request: SearchRequest) -> SearchResponse:
         for option in _cheapest_per_depart_date(kept)
     ]
 
-    results = [TripOptionOut.of(o, spec.passengers) for o in kept[: request.limit]]
+    shown = kept[: request.limit]
+
+    async with db.session() as store:
+        recorded = await history.record(store, result.outbound + result.inbound)
+        contexts = await _price_contexts(store, spec, shown)
+
+    results = [
+        TripOptionOut.of(o, spec.passengers, contexts.get(id(o))) for o in shown
+    ]
 
     return SearchResponse(
         origin=spec.origin,
@@ -165,6 +196,7 @@ async def search(request: SearchRequest) -> SearchResponse:
             removed.get("unknown_airline", 0) > 0 and request.depth is not ScanDepth.DEEP
         ),
         demo_mode=config.DEMO_MODE,
+        observations_recorded=recorded,
         warnings=result.warnings,
     )
 
@@ -183,6 +215,41 @@ async def search_estimate(request: SearchRequest) -> dict:
     return {
         depth.value: estimate_calls(spec, depth) for depth in ScanDepth
     }
+
+
+async def _price_contexts(store, spec, options: list) -> dict[int, object]:
+    """Price context per option, judged on its outbound leg.
+
+    A paired trip's total was never observed as a single price, so the leg we
+    actually have a record for is the honest thing to compare. One query covers
+    every option rather than one per row.
+    """
+    if not options:
+        return {}
+
+    grouped: dict[bool, list] = {True: [], False: []}
+    for option in options:
+        grouped[option.outbound.is_round_trip].append(option)
+
+    contexts: dict[int, object] = {}
+    for round_trip, group in grouped.items():
+        if not group:
+            continue
+        pools = await history.history_by_date(
+            store,
+            spec.origin,
+            spec.destination,
+            [o.outbound.depart_date for o in group],
+            spec.currency,
+            round_trip=round_trip,
+        )
+        for option in group:
+            prices, distinct_days = pools.get(option.outbound.depart_date, ([], 0))
+            contexts[id(option)] = history.summarise(
+                prices, option.outbound.price, distinct_days
+            )
+
+    return contexts
 
 
 def _cheapest_per_depart_date(options: list) -> list:

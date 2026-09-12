@@ -1,6 +1,13 @@
 "use client";
 
-import { Leg, TripOption, formatMoney, relativeAge } from "@/lib/api";
+import {
+  Leg,
+  PriceContext,
+  TripOption,
+  VERDICT_STYLE,
+  formatMoney,
+  relativeAge,
+} from "@/lib/api";
 
 const KIND_LABEL: Record<TripOption["kind"], string> = {
   one_way: "One way",
@@ -48,6 +55,32 @@ function LegRow({ leg, label }: { leg: Leg; label: string }) {
   );
 }
 
+function PriceSignal({ context }: { context: PriceContext }) {
+  // A verdict with no history behind it would be a guess dressed as advice, so
+  // the unknown case shows how far off a real signal is instead.
+  const style = VERDICT_STYLE[context.verdict];
+  const detail =
+    context.verdict === "unknown"
+      ? `${context.samples} observation${context.samples === 1 ? "" : "s"} so far`
+      : context.note;
+
+  return (
+    <div className="mt-2 flex flex-wrap items-center gap-2">
+      <span
+        className={`rounded px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide ${style.className}`}
+      >
+        {style.label}
+      </span>
+      <span className="text-[11px] text-muted">{detail}</span>
+      {context.confidence !== "none" && context.confidence !== "high" && (
+        <span className="text-[11px] text-muted/70">
+          ({context.confidence} confidence)
+        </span>
+      )}
+    </div>
+  );
+}
+
 export default function ResultsList({
   options,
   currency,
@@ -89,6 +122,9 @@ export default function ResultsList({
 
               <LegRow leg={option.outbound} label="Out" />
               {option.inbound && <LegRow leg={option.inbound} label="Back" />}
+              {option.price_context && (
+                <PriceSignal context={option.price_context} />
+              )}
             </div>
 
             <div className="text-right">

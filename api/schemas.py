@@ -7,6 +7,7 @@ from decimal import Decimal
 from pydantic import BaseModel, Field
 
 from api.domain import CarrierClass, DateRange, FareRow, TripClass, TripOption
+from api.engines.history import PriceContext
 from api.pipeline.filters import FilterSet
 from api.pipeline.scan import ScanDepth
 from api.providers.travelpayouts import booking_link
@@ -89,10 +90,19 @@ class TripOptionOut(BaseModel):
     inbound: LegOut | None
     booking_link: str
     observed_at: datetime
+    # Judged on the outbound leg against its own history: for a paired trip the
+    # total has no comparable record, since each leg is priced separately.
+    price_context: PriceContext | None = None
 
     @classmethod
-    def of(cls, option: TripOption, passengers: int = 1) -> TripOptionOut:
+    def of(
+        cls,
+        option: TripOption,
+        passengers: int = 1,
+        price_context: PriceContext | None = None,
+    ) -> TripOptionOut:
         return cls(
+            price_context=price_context,
             kind=option.kind,
             depart_date=option.depart_date,
             return_date=option.return_date,
@@ -139,4 +149,7 @@ class SearchResponse(BaseModel):
     filtered_out: dict[str, int]
     needs_deep_scan: bool
     demo_mode: bool
+    # New rows added to the price history by this scan. Visible so the user can
+    # see the dataset growing, since the timing signal is worthless until it has.
+    observations_recorded: int = 0
     warnings: list[str]
