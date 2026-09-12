@@ -32,9 +32,9 @@ A single-date search is just a range of length one.
 
 Amadeus shut down its free Self-Service API on 17 July 2026. Kiwi's Tequila is
 invite-only, and Skyscanner and Duffel need commercial agreements. The one
-remaining self-serve, no-cost source of real fare data is the
-[Travelpayouts / Aviasales Data API](https://www.travelpayouts.com/developers/api),
-free with affiliate registration.
+remaining self-serve, no-cost source of real fare data is the Travelpayouts /
+Aviasales Data API, free with affiliate registration at
+[travelpayouts.com](https://travelpayouts.com).
 
 Its prices are **cached** — real fares from real recent searches, refreshed
 continuously, but not live quotes. Three consequences, stated plainly:

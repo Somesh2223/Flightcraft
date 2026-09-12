@@ -109,8 +109,9 @@ class TravelpayoutsClient:
     async def _get(self, path: str, params: dict[str, Any]) -> Any:
         if not self.token:
             raise TravelpayoutsError(
-                "TRAVELPAYOUTS_TOKEN is not set — register at "
-                "https://www.travelpayouts.com/developers/api to get one"
+                "TRAVELPAYOUTS_TOKEN is not set — sign up at https://travelpayouts.com "
+                "and copy the token from https://app.travelpayouts.com "
+                "(Profile -> API token)"
             )
         if self._client is None:
             raise TravelpayoutsError("client used outside an async context manager")

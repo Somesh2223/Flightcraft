@@ -131,8 +131,17 @@ export default function Home() {
         <div className="mb-6 rounded-lg border border-amber-500/40 bg-amber-500/10 p-4 text-sm">
           <strong className="font-semibold text-amber-300">Demo data.</strong>{" "}
           <span className="text-amber-100/80">
-            These prices are synthetic. Set <code>TRAVELPAYOUTS_TOKEN</code> in{" "}
-            <code>.env</code> to scan real fares.
+            These prices are synthetic. For real fares, get a free token from{" "}
+            <a
+              href="https://app.travelpayouts.com"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="underline underline-offset-2"
+            >
+              app.travelpayouts.com
+            </a>{" "}
+            (Profile → API token) and set <code>TRAVELPAYOUTS_TOKEN</code> in{" "}
+            <code>.env</code>.
           </span>
         </div>
       )}
