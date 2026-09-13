@@ -52,6 +52,10 @@ async def lifespan(_: FastAPI):
     await db.dispose()
 
 
+# How many return dates each departure day carries into the response, so that
+# opening a day on the grid is a genuine choice rather than a single suggestion.
+RETURNS_PER_DATE = 6
+
 app = FastAPI(title="Flightcraft", version="0.1.0", lifespan=lifespan)
 
 app.add_middleware(
@@ -261,7 +265,22 @@ async def search(request: SearchRequest) -> SearchResponse:
         for option in _cheapest_per_depart_date(kept, payable)
     ]
 
+    # Every day drawn on the calendar has to be openable, and opening one has to
+    # show a real choice of return dates rather than the single cheapest. The
+    # results list is capped globally, so without this a day whose best option
+    # ranks below the cap opens to an empty list, and a day that scrapes in
+    # opens to exactly one option — neither of which is choosing a return.
     shown = kept[: request.limit]
+    already = {id(o) for o in shown}
+    shown = datespace.bookable_first(
+        shown
+        + [
+            o
+            for o in _best_per_depart_date(kept, payable, RETURNS_PER_DATE)
+            if id(o) not in already
+        ],
+        payable,
+    )
 
     async with db.session() as store:
         recorded = await history.record(store, result.outbound + result.inbound)
@@ -528,3 +547,19 @@ def _cheapest_per_depart_date(options: list, price_of=None) -> list:
         if current is None or price(option) < price(current):
             best[option.depart_date] = option
     return sorted(best.values(), key=lambda o: o.depart_date)
+
+
+def _best_per_depart_date(options: list, price_of=None, per_date: int = 1) -> list:
+    """The cheapest few options for each departure date.
+
+    More than one, because on a two-range search the return date is the thing
+    being chosen; offering a single cheapest return per day is a recommendation,
+    not a choice.
+    """
+    price = price_of or (lambda o: o.total_price)
+    grouped: dict = {}
+    for option in sorted(options, key=price):
+        bucket = grouped.setdefault(option.depart_date, [])
+        if len(bucket) < per_date:
+            bucket.append(option)
+    return [o for day in sorted(grouped) for o in grouped[day]]

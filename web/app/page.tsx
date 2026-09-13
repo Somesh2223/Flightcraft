@@ -241,8 +241,13 @@ export default function Home() {
 
   const visible = useMemo(() => {
     if (!data) return [];
-    if (!selectedDate) return data.results;
-    return data.results.filter((o) => o.depart_date === selectedDate);
+    // Picking a day shows every return that pairs with it; the default view
+    // stays a shortlist, since the payload now carries several returns per day
+    // and listing them all unprompted would bury the ranking.
+    if (selectedDate) {
+      return data.results.filter((o) => o.depart_date === selectedDate);
+    }
+    return data.results.slice(0, 20);
   }, [data, selectedDate]);
 
   const removed = data ? Object.entries(data.filtered_out) : [];
@@ -588,7 +593,11 @@ export default function Home() {
             </div>
             <div>
               <h2 className="mb-3 text-sm font-medium text-muted">
-                {selectedDate ? `Options on ${selectedDate}` : "Best options"}
+                {selectedDate
+                  ? wantsReturn
+                    ? `Returns for ${selectedDate} — ${visible.length} option${visible.length === 1 ? "" : "s"}`
+                    : `Options on ${selectedDate}`
+                  : "Best options"}
               </h2>
               <ResultsList
                 options={visible}

@@ -42,6 +42,13 @@ interface Props {
   onSelect: (date: string) => void;
 }
 
+function dayMonth(iso: string): string {
+  return new Date(`${iso}T00:00:00`).toLocaleDateString("en-GB", {
+    day: "numeric",
+    month: "short",
+  });
+}
+
 export default function MonthGrid({ cells, currency, selected, onSelect }: Props) {
   if (cells.length === 0) return null;
 
@@ -49,12 +56,23 @@ export default function MonthGrid({ cells, currency, selected, onSelect }: Props
   const min = Math.min(...prices);
   const max = Math.max(...prices);
   const span = max - min || 1;
+  // On a return search each cell is a whole trip, not a departure. Saying so
+  // matters: a round-trip total sitting unlabelled in a calendar of departure
+  // dates reads as a one-way fare.
+  const isReturn = cells.some((c) => c.return_date);
 
   const byDate = new Map(cells.map((c) => [c.depart_date, c]));
   const months = [...new Set(cells.map((c) => monthKey(c.depart_date)))].sort();
 
   return (
     <div className="space-y-6">
+      {isReturn && (
+        <p className="text-xs text-muted">
+          Round-trip totals. Each day shows its cheapest return — tap a day to
+          see the other return dates that pair with it.
+        </p>
+      )}
+
       <div className="flex flex-wrap items-center gap-3 text-xs text-muted">
         <span>Cheapest {formatMoney(min, currency)}</span>
         <div className="flex h-2 w-32 overflow-hidden rounded-full">
@@ -143,6 +161,11 @@ export default function MonthGrid({ cells, currency, selected, onSelect }: Props
                     <div className="text-xs font-semibold text-white">
                       {formatMoney(price, currency)}
                     </div>
+                    {cell.return_date && (
+                      <div className="truncate text-[10px] font-medium text-white/90">
+                        ↩ {dayMonth(cell.return_date)}
+                      </div>
+                    )}
                     <div className="truncate text-[10px] text-white/70">
                       {cell.stops === 0 ? "nonstop" : `${cell.stops} stop`}
                       {cell.airline ? ` · ${cell.airline}` : ""}
