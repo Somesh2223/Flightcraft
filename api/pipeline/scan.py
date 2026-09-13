@@ -1,21 +1,17 @@
-"""Fanning a SearchSpec out across provider endpoints.
+"""Stage one: the free cached landscape.
 
-Tiers, sized against what the endpoints actually return (see the provider
-module for the measurements):
+This maps where the cheap dates are across whole months, for nothing. What it
+cannot do is name an airline, an aircraft, or a price anyone can actually pay —
+that is stage two's job, in pipeline/resolve.py.
 
     QUICK     1 call per direction. `latest` with period_type="year" returns
               dated one-way fares across a whole year, so even a two-month
-              dual-range search costs two calls. No airline attribution.
+              dual-range search costs two calls.
     STANDARD  + month-matrix per month per direction. Overlaps QUICK heavily
-              but is fresher and sometimes covers dates `latest` misses.
-              The default.
-    DEEP      + one call per date, the only source of airline attribution.
-              Those fares are priced as ROUND TRIPS, so they are requested only
-              when the search actually wants a return — on a one-way search they
-              could never be used, and DEEP is silently equivalent to STANDARD.
+              but is fresher and covers some dates `latest` misses.
 
-Depth is a cost dial, not a quality setting: QUICK results are not wrong, they
-are just narrower.
+Depth also decides how many cells stage two buys outright, which is where the
+money goes; the calls here are free either way.
 """
 from __future__ import annotations
 
@@ -186,89 +182,8 @@ async def scan(
     return result
 
 
-ATTRIBUTION_LIMIT = 20
-
-# The cheap endpoint rejects any pair whose departure and return are further
-# apart than this: "diff between max depart date and min return date exceeds
-# supported maximum of 30".
-ATTRIBUTION_MAX_NIGHTS = 30
-
-
-async def attribute_cells(
-    client: TravelpayoutsClient,
-    spec: SearchSpec,
-    cells: list[tuple[date, date]],
-    limit: int = ATTRIBUTION_LIMIT,
-) -> tuple[list[FareRow], int, list[str]]:
-    """Fetch airline-attributed round-trip fares for specific date pairs.
-
-    The only endpoint carrying an airline prices round trips, so attribution is
-    only possible once both dates are known. Rather than sweeping the calendar,
-    the shortlist of cheapest date pairs is priced exactly — bounded at `limit`
-    calls instead of one per date, and the fares that come back are real,
-    comparable round-trip options rather than a decoration on existing rows.
-
-    Returns rows, not enrichments: a fare priced for these exact dates stands on
-    its own and competes with the paired one-ways.
-    """
-    eligible = [
-        (depart, ret)
-        for depart, ret in cells
-        if (ret - depart).days <= ATTRIBUTION_MAX_NIGHTS
-    ]
-    shortlist = eligible[:limit]
-
-    if not shortlist:
-        if cells:
-            return [], 0, [
-                f"Airlines could not be identified: the only endpoint that names "
-                f"them refuses trips longer than {ATTRIBUTION_MAX_NIGHTS} nights, "
-                f"and every option here is longer."
-            ]
-        return [], 0, []
-
-    batches = await asyncio.gather(
-        *(
-            client.cheap(
-                spec.origin,
-                spec.destination,
-                depart,
-                return_date=ret,
-                currency=spec.currency,
-            )
-            for depart, ret in shortlist
-        ),
-        return_exceptions=True,
-    )
-
-    rows: list[FareRow] = []
-    warnings: list[str] = []
-    wanted = set(shortlist)
-
-    for batch in batches:
-        if isinstance(batch, BaseException):
-            warnings.append(f"airline lookup: {type(batch).__name__}: {batch}")
-            continue
-        for row in batch:
-            # The provider can answer with its own dates; only keep fares that
-            # actually price the pair we asked about.
-            if row.return_date and (row.depart_date, row.return_date) in wanted:
-                rows.append(row)
-
-    rows = _dedupe(rows)
-
-    if not rows and not warnings:
-        warnings.append(
-            f"No airline could be identified for any of the {len(shortlist)} best "
-            "date pairs. The endpoint that names airlines has very thin coverage, "
-            "so most fares stay unattributed however deep the scan."
-        )
-
-    return rows, len(shortlist), warnings
-
-
 def estimate_calls(spec: SearchSpec, depth: ScanDepth) -> int:
-    """Provider calls a scan will cost, so the UI can warn before a deep scan."""
+    """Free cached calls a scan will cost. Paid resolution is counted separately."""
     spans: list[DateRange] = [spec.outbound]
     if spec.inbound is not None:
         spans.append(spec.inbound)
@@ -278,8 +193,6 @@ def estimate_calls(spec: SearchSpec, depth: ScanDepth) -> int:
         total += 1
         if depth in (ScanDepth.STANDARD, ScanDepth.DEEP):
             total += len(span.months())
-    if depth is ScanDepth.DEEP and spec.is_return:
-        total += ATTRIBUTION_LIMIT
     return total
 
 

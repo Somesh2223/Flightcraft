@@ -143,6 +143,26 @@ def collapse_to_best_per_cell(options: Iterable[TripOption]) -> list[TripOption]
     return sorted(best.values(), key=lambda opt: (opt.total_price, opt.depart_date))
 
 
+def bookable_first(options: Iterable[TripOption]) -> list[TripOption]:
+    """Rank verified quotes above estimates, each group by price.
+
+    Sorting purely by price puts unverified cached estimates at the top, because
+    they are systematically optimistic — they are the fares that were cheapest
+    at some point, and the cheap ones are the first to disappear. Resolving the
+    cheapest cells then makes this worse, not better: their real prices come back
+    higher, they sink, and the next batch of unchecked estimates floats up in
+    their place.
+
+    So a fare that has been priced for real leads, even when a cheaper estimate
+    exists. The estimate is still shown, still labelled, and can be priced on
+    demand — it is a lead, not an offer.
+    """
+    return sorted(
+        options,
+        key=lambda opt: (not opt.is_live_quote, opt.total_price, opt.depart_date),
+    )
+
+
 def price_grid(options: Iterable[TripOption]) -> dict[date, dict[date | None, TripOption]]:
     """Nested depart -> return -> option, for rendering the heatmap."""
     grid: dict[date, dict[date | None, TripOption]] = defaultdict(dict)

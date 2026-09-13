@@ -1,11 +1,11 @@
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, datetime, timezone
 from decimal import Decimal
 
 import pytest
 
-from api.domain import DateRange, SearchSpec
+from api.domain import DateRange, FareRow, SearchSpec, Segment, TripOption
 from api.engines import datespace
 
 
@@ -87,6 +87,79 @@ class TestPairing:
         assert options[0].depart_date == date(2026, 11, 18)
         assert options[0].return_date == date(2027, 1, 22)
         assert options[0].total_price == Decimal("34000")
+
+
+class TestBookableFirst:
+    """Cached estimates are systematically optimistic, so price order alone
+    puts unbookable fares at the top."""
+
+    def _live(self, day: str, price: int):
+        return TripOption.from_fare(
+            FareRow(
+                origin="DEL",
+                destination="DXB",
+                depart_date=date.fromisoformat(day),
+                price=Decimal(price),
+                currency="inr",
+                stops=0,
+                airline="6E",
+                source="ignav",
+                observed_at=datetime(2026, 9, 13, tzinfo=timezone.utc),
+                outbound_segments=[
+                    Segment(
+                        marketing_carrier="6E",
+                        flight_number="1463",
+                        origin="DEL",
+                        destination="DXB",
+                    )
+                ],
+            )
+        )
+
+    def _estimate(self, day: str, price: int):
+        return TripOption.from_fare(
+            FareRow(
+                origin="DEL",
+                destination="DXB",
+                depart_date=date.fromisoformat(day),
+                price=Decimal(price),
+                currency="inr",
+                stops=1,
+                source="travelpayouts",
+                observed_at=datetime(2026, 9, 10, tzinfo=timezone.utc),
+            )
+        )
+
+    def test_a_verified_fare_outranks_a_cheaper_estimate(self):
+        options = [
+            self._estimate("2026-10-14", 16068),
+            self._live("2026-10-04", 16803),
+        ]
+
+        ranked = datespace.bookable_first(options)
+
+        assert ranked[0].is_live_quote
+        assert ranked[0].total_price == Decimal(16803)
+
+    def test_verified_fares_are_still_ordered_by_price(self):
+        options = [
+            self._live("2026-10-04", 19000),
+            self._live("2026-10-05", 16803),
+            self._estimate("2026-10-14", 15000),
+        ]
+
+        ranked = datespace.bookable_first(options)
+
+        assert [o.total_price for o in ranked] == [
+            Decimal(16803),
+            Decimal(19000),
+            Decimal(15000),
+        ]
+
+    def test_estimates_are_kept_not_discarded(self):
+        options = [self._estimate("2026-10-14", 16068), self._live("2026-10-04", 16803)]
+
+        assert len(datespace.bookable_first(options)) == 2
 
 
 class TestBuildOptions:

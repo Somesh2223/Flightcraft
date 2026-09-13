@@ -315,3 +315,17 @@ class TripOption(BaseModel):
     def duration_minutes(self) -> int | None:
         durations = [leg.duration_minutes for leg in self.legs]
         return sum(durations) if all(d is not None for d in durations) else None
+
+    @property
+    def is_live_quote(self) -> bool:
+        """Every leg came from a provider that priced a real itinerary.
+
+        The distinction is the difference between a number and an offer, so the
+        UI must be able to say which one it is showing.
+        """
+        return all(leg.is_live_quote for leg in self.legs)
+
+    @property
+    def provider_ref(self) -> str | None:
+        """Handle for fetching booking links, when this is a live quote."""
+        return self.outbound.provider_ref

@@ -34,6 +34,10 @@ IGNAV_TIMEOUT_SECONDS = float(os.getenv("IGNAV_TIMEOUT_SECONDS", "45"))
 # How many candidate dates a scan resolves into exact itineraries. This is the
 # only setting that costs money: one request per date, so ~$0.02 a search.
 IGNAV_RESOLVE_LIMIT = int(os.getenv("IGNAV_RESOLVE_LIMIT", "10"))
+# How long a live quote may be reused before it is bought again. Every miss
+# costs a request, and repeating a search is normal; but a stale "live" price is
+# the exact failure this stage exists to prevent, so the window stays short.
+LIVE_QUOTE_TTL_MINUTES = int(os.getenv("LIVE_QUOTE_TTL_MINUTES", "30"))
 
 # --- Aircraft enrichment ---
 AERODATABOX_RAPIDAPI_KEY = os.getenv("AERODATABOX_RAPIDAPI_KEY", "")

@@ -7,19 +7,31 @@ import httpx
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 
-from api import config
-from api.domain import SearchSpec
+from datetime import datetime, timezone
+from decimal import Decimal
+
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
+from api import config
+from api.domain import DateRange, FareRow, SearchSpec, TripOption
 from api.engines import datespace, history
 from api.jobs import popular
-from api.pipeline import filters
-from api.storage import db
-from api.pipeline.scan import ScanDepth, attribute_cells, estimate_calls, scan
+from api.pipeline import filters, resolve
+from api.pipeline.filters import FilterSet
+from api.pipeline.scan import ScanDepth, estimate_calls, scan
 from api.providers.demo import DemoClient
+from api.providers.ignav import IgnavClient, IgnavError
 from api.providers.travelpayouts import TravelpayoutsClient, TravelpayoutsError
 from api.reference import carriers
-from api.schemas import CalendarCell, SearchRequest, SearchResponse, TripOptionOut
+from api.schemas import (
+    BookingLinksRequest,
+    CalendarCell,
+    ResolveDateRequest,
+    SearchRequest,
+    SearchResponse,
+    TripOptionOut,
+)
+from api.storage import db
 
 @asynccontextmanager
 async def lifespan(_: FastAPI):
@@ -55,6 +67,7 @@ async def health() -> dict:
         "demo_mode": config.DEMO_MODE,
         "travelpayouts_configured": bool(config.TRAVELPAYOUTS_TOKEN),
         "marker_configured": bool(config.TRAVELPAYOUTS_MARKER),
+        "live_pricing_configured": bool(config.IGNAV_API_KEY),
         "default_currency": config.DEFAULT_CURRENCY,
     }
 
@@ -97,28 +110,17 @@ async def search(request: SearchRequest) -> SearchResponse:
             outbound, inbound, spec.min_nights, spec.max_nights, spec.inbound
         )
 
+    filter_set = request.to_filters()
+
     try:
+        # Stage one: the free cached landscape. Wide, cheap, and vague — it maps
+        # where the cheap dates are without naming a single airline.
         async with (DemoClient() if config.DEMO_MODE else TravelpayoutsClient()) as client:
             result = await scan(spec, client, request.depth)
             inbound_rows = result.inbound if spec.is_return else None
             unfiltered = datespace.collapse_to_best_per_cell(
                 assemble(result.outbound, inbound_rows)
             )
-
-            if request.depth is ScanDepth.DEEP and spec.is_return:
-                cells = [
-                    (o.depart_date, o.return_date)
-                    for o in unfiltered
-                    if o.return_date is not None
-                ]
-                extra, calls, warnings = await attribute_cells(client, spec, cells)
-                if extra:
-                    result.outbound.extend(extra)
-                    unfiltered = datespace.collapse_to_best_per_cell(
-                        assemble(result.outbound, inbound_rows)
-                    )
-                result.provider_calls += calls
-                result.warnings.extend(warnings)
     except TravelpayoutsError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
     except httpx.HTTPError as exc:
@@ -126,7 +128,34 @@ async def search(request: SearchRequest) -> SearchResponse:
             status_code=502, detail=f"upstream provider error: {exc}"
         ) from exc
 
-    filter_set = request.to_filters()
+    # Stage two: buy exact answers for the best cells. Every date the user asked
+    # about still appears; the ones we paid for become real, bookable offers.
+    live_options: list = []
+    resolved_cells: list = []
+    live_requests = 0
+    live_cache_hits = 0
+    if config.IGNAV_API_KEY and not config.DEMO_MODE:
+        async with IgnavClient() as ignav:
+            resolution = await resolve.resolve(
+                ignav, spec, unfiltered, request.depth, filter_set
+            )
+        live_options = datespace.build_options(
+            [r for r in resolution.rows if not r.is_round_trip],
+            None,
+        ) + [
+            TripOption.from_fare(r) for r in resolution.rows if r.is_round_trip
+        ]
+        resolved_cells = resolution.cells
+        live_requests = resolution.requests
+        live_cache_hits = resolution.cached_cells
+        result.provider_calls += resolution.requests
+        result.warnings.extend(resolution.warnings)
+        unfiltered = resolve.merge(unfiltered, live_options, resolved_cells)
+    elif filter_set.needs_aircraft:
+        result.warnings.append(
+            "Aircraft filters need live pricing, which is not configured. Set "
+            "IGNAV_API_KEY to use them."
+        )
 
     if not spec.is_return and result.outbound and not unfiltered:
         result.warnings.append(
@@ -148,8 +177,15 @@ async def search(request: SearchRequest) -> SearchResponse:
     else:
         kept_inbound = None
 
-    outcome = filters.apply(assemble(kept_outbound, kept_inbound), filter_set)
-    kept = datespace.collapse_to_best_per_cell(outcome.kept)
+    cached_options = datespace.collapse_to_best_per_cell(
+        assemble(kept_outbound, kept_inbound)
+    )
+    outcome = filters.apply(
+        resolve.merge(cached_options, live_options, resolved_cells), filter_set
+    )
+    kept = datespace.bookable_first(
+        datespace.collapse_to_best_per_cell(outcome.kept)
+    )
     removed = {
         reason: removed.get(reason, 0) + outcome.removed.get(reason, 0)
         for reason in set(removed) | set(outcome.removed)
@@ -196,9 +232,91 @@ async def search(request: SearchRequest) -> SearchResponse:
             removed.get("unknown_airline", 0) > 0 and request.depth is not ScanDepth.DEEP
         ),
         demo_mode=config.DEMO_MODE,
+        live_requests=live_requests,
+        live_cache_hits=live_cache_hits,
         observations_recorded=recorded,
         warnings=result.warnings,
     )
+
+
+@app.post("/api/resolve-date", response_model=list[TripOptionOut])
+async def resolve_date(request: ResolveDateRequest) -> list[TripOptionOut]:
+    """Turn one estimated date into real, bookable itineraries."""
+    if not config.IGNAV_API_KEY:
+        raise HTTPException(status_code=503, detail="live pricing is not configured")
+
+    spec = SearchSpec(
+        origin=request.origin,
+        destination=request.destination,
+        outbound=DateRange(start=request.depart_date, end=request.depart_date),
+        currency=request.currency,
+        passengers=request.passengers,
+    )
+    filter_set = FilterSet(
+        max_stops=request.max_stops, include_airlines=request.include_airlines
+    )
+    seed = [
+        TripOption.from_fare(
+            FareRow(
+                origin=spec.origin,
+                destination=spec.destination,
+                depart_date=request.depart_date,
+                return_date=request.return_date,
+                price=Decimal(0),
+                currency=spec.currency,
+                source="seed",
+                observed_at=datetime.now(timezone.utc),
+            )
+        )
+    ]
+
+    try:
+        async with IgnavClient() as client:
+            result = await resolve.resolve(
+                client, spec, seed, ScanDepth.STANDARD, filter_set, limit=1
+            )
+    except IgnavError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+    if result.warnings and not result.rows:
+        raise HTTPException(status_code=502, detail=result.warnings[0])
+
+    options = [
+        TripOption.from_fare(row) if row.is_round_trip else TripOption.from_fare(row)
+        for row in result.rows
+    ]
+    options.sort(key=lambda o: o.total_price)
+    return [TripOptionOut.of(o, spec.passengers) for o in options]
+
+
+@app.post("/api/booking-links")
+async def booking_links(request: BookingLinksRequest) -> dict:
+    """Where to buy one itinerary, and what each seller charges for it.
+
+    Called on demand rather than during search: the search price and the price
+    at checkout genuinely differ, and this is the one that can be paid.
+    """
+    if not config.IGNAV_API_KEY:
+        raise HTTPException(status_code=503, detail="live pricing is not configured")
+
+    try:
+        async with IgnavClient() as client:
+            links = await client.booking_links(request.provider_ref)
+    except IgnavError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+    return {
+        "links": [
+            {
+                "provider_name": link.provider_name,
+                "provider_type": link.provider_type,
+                "price": link.price,
+                "currency": link.currency,
+                "url": link.url,
+            }
+            for link in links
+        ]
+    }
 
 
 @app.post("/api/search/estimate")

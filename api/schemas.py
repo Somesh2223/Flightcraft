@@ -6,7 +6,16 @@ from decimal import Decimal
 
 from pydantic import BaseModel, Field
 
-from api.domain import CarrierClass, DateRange, FareRow, TripClass, TripOption
+from api.domain import (
+    BodyType,
+    CarrierClass,
+    DateRange,
+    FareRow,
+    Segment,
+    TripClass,
+    TripOption,
+)
+from api.reference import aircraft
 from api.engines.history import PriceContext
 from api.pipeline.filters import FilterSet
 from api.pipeline.scan import ScanDepth
@@ -29,6 +38,10 @@ class SearchRequest(BaseModel):
     alliances: set[str] | None = None
     max_price: Decimal | None = None
 
+    aircraft_families: set[str] | None = None
+    body_types: set[BodyType] | None = None
+    retiring_only: bool = False
+
     depth: ScanDepth = ScanDepth.STANDARD
     currency: str = "inr"
     passengers: int = Field(default=1, ge=1, le=9)
@@ -43,6 +56,72 @@ class SearchRequest(BaseModel):
             carrier_classes=self.carrier_classes,
             alliances=self.alliances,
             max_price=self.max_price,
+            aircraft_families=self.aircraft_families,
+            body_types=self.body_types,
+            retiring_only=self.retiring_only,
+        )
+
+
+class ResolveDateRequest(BaseModel):
+    """Price one estimated cell for real, on demand.
+
+    The estimates a scan shows are leads: cheap-looking dates nobody has checked.
+    This turns one of them into an offer for a single request, so a traveller can
+    chase a promising date without the search paying to price all sixty.
+    """
+
+    origin: str
+    destination: str
+    depart_date: date
+    return_date: date | None = None
+    max_stops: int | None = Field(default=None, ge=0)
+    include_airlines: set[str] | None = None
+    currency: str = "inr"
+    passengers: int = Field(default=1, ge=1, le=9)
+
+
+class BookingLinksRequest(BaseModel):
+    """Where to actually buy a specific live-quoted itinerary.
+
+    Deliberately a separate call: a booking lookup costs a provider request, and
+    fetching one for every result would double the cost of a search to answer a
+    question most results are never asked.
+    """
+
+    provider_ref: str
+
+
+class SegmentOut(BaseModel):
+    carrier: str
+    carrier_name: str | None
+    flight_number: str
+    origin: str
+    destination: str
+    departure_local: datetime | None
+    arrival_local: datetime | None
+    duration_minutes: int | None
+    aircraft: str | None
+    aircraft_family: str | None
+    aircraft_body: BodyType
+
+    @classmethod
+    def of(cls, segment: Segment) -> SegmentOut:
+        info = aircraft.classify(segment.aircraft)
+        return cls(
+            carrier=segment.marketing_carrier,
+            carrier_name=(
+                segment.operating_carrier_name
+                or carriers.display_name(segment.marketing_carrier)
+            ),
+            flight_number=segment.designator,
+            origin=segment.origin,
+            destination=segment.destination,
+            departure_local=segment.departure_local,
+            arrival_local=segment.arrival_local,
+            duration_minutes=segment.duration_minutes,
+            aircraft=segment.aircraft,
+            aircraft_family=info.family,
+            aircraft_body=info.body,
         )
 
 
@@ -58,10 +137,12 @@ class LegOut(BaseModel):
     alliance: str | None
     flight_number: str | None
     departure_at: datetime | None
+    duration_minutes: int | None
     observed_at: datetime
+    segments: list[SegmentOut] = Field(default_factory=list)
 
     @classmethod
-    def of(cls, row: FareRow) -> LegOut:
+    def of(cls, row: FareRow, segments: list[Segment] | None = None) -> LegOut:
         return cls(
             origin=row.origin,
             destination=row.destination,
@@ -74,7 +155,12 @@ class LegOut(BaseModel):
             alliance=carriers.alliance(row.airline),
             flight_number=row.flight_number,
             departure_at=row.departure_at,
+            duration_minutes=row.duration_minutes,
             observed_at=row.observed_at,
+            segments=[
+                SegmentOut.of(s)
+                for s in (segments if segments is not None else row.outbound_segments)
+            ],
         )
 
 
@@ -93,6 +179,11 @@ class TripOptionOut(BaseModel):
     # Judged on the outbound leg against its own history: for a paired trip the
     # total has no comparable record, since each leg is priced separately.
     price_context: PriceContext | None = None
+    # A live quote names its flights and can be priced to a checkout page. An
+    # estimate is a cached observation — roughly right, possibly no longer real.
+    is_live_quote: bool = False
+    provider_ref: str | None = None
+    duration_minutes: int | None = None
 
     @classmethod
     def of(
@@ -101,6 +192,10 @@ class TripOptionOut(BaseModel):
         passengers: int = 1,
         price_context: PriceContext | None = None,
     ) -> TripOptionOut:
+        # A round trip priced as one fare carries both directions on a single
+        # row, so its return segments belong to the inbound leg rather than the
+        # outbound one they are stored on.
+        native_return = option.kind == "round_trip" and option.outbound.inbound_segments
         return cls(
             price_context=price_context,
             kind=option.kind,
@@ -111,7 +206,15 @@ class TripOptionOut(BaseModel):
             currency=option.currency,
             max_stops=option.max_stops,
             outbound=LegOut.of(option.outbound),
-            inbound=LegOut.of(option.inbound) if option.inbound else None,
+            inbound=(
+                LegOut.of(option.inbound)
+                if option.inbound
+                else (
+                    LegOut.of(option.outbound, option.outbound.inbound_segments)
+                    if native_return
+                    else None
+                )
+            ),
             booking_link=booking_link(
                 option.outbound.origin,
                 option.outbound.destination,
@@ -120,6 +223,9 @@ class TripOptionOut(BaseModel):
                 passengers,
             ),
             observed_at=option.observed_at,
+            is_live_quote=option.is_live_quote,
+            provider_ref=option.provider_ref,
+            duration_minutes=option.duration_minutes,
         )
 
 
@@ -149,6 +255,10 @@ class SearchResponse(BaseModel):
     filtered_out: dict[str, int]
     needs_deep_scan: bool
     demo_mode: bool
+    # Cells priced for real this search, and cells answered from the short-lived
+    # live-quote cache. Surfaced because they are what the search actually costs.
+    live_requests: int = 0
+    live_cache_hits: int = 0
     # New rows added to the price history by this scan. Visible so the user can
     # see the dataset growing, since the timing signal is worthless until it has.
     observations_recorded: int = 0
