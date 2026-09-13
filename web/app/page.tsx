@@ -6,10 +6,12 @@ import MonthGrid from "@/components/MonthGrid";
 import OffersPanel, { loadOffers } from "@/components/OffersPanel";
 import PointsWallet, { loadWallet } from "@/components/PointsWallet";
 import ResultsList from "@/components/ResultsList";
+import TripMatrix from "@/components/TripMatrix";
 import {
   BODY_LABEL,
   BodyType,
   CarrierClass,
+  MatrixCell,
   REJECTION_LABELS,
   ScanDepth,
   SearchRequest,
@@ -88,8 +90,14 @@ export default function Home() {
   const [data, setData] = useState<SearchResponse | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [selectedDate, setSelectedDate] = useState<string | null>(null);
+  // A selection is a departure, optionally paired with a return. The calendar
+  // picks the departure alone; the matrix picks both.
+  const [selection, setSelection] = useState<{
+    depart: string;
+    ret: string | null;
+  } | null>(null);
   const [pricingCell, setPricingCell] = useState<string | null>(null);
+  const [view, setView] = useState<"grid" | "matrix">("matrix");
   // Read after mount, not during render: localStorage does not exist on the
   // server and reading it in the initial state would break hydration.
   const [wallet, setWallet] = useState<Wallet>({ holdings: [] });
@@ -218,7 +226,7 @@ export default function Home() {
     try {
       const result = await search(body);
       setData(result);
-      setSelectedDate(null);
+      setSelection(null);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Search failed");
       setData(null);
@@ -244,13 +252,69 @@ export default function Home() {
     // Picking a day shows every return that pairs with it; the default view
     // stays a shortlist, since the payload now carries several returns per day
     // and listing them all unprompted would bury the ranking.
-    if (selectedDate) {
-      return data.results.filter((o) => o.depart_date === selectedDate);
+    if (selection) {
+      return data.results.filter(
+        (o) =>
+          o.depart_date === selection.depart &&
+          (selection.ret === null || o.return_date === selection.ret),
+      );
     }
     return data.results.slice(0, 20);
-  }, [data, selectedDate]);
+  }, [data, selection]);
 
   const removed = data ? Object.entries(data.filtered_out) : [];
+
+  /** A matrix pair the results list has no full itinerary for.
+   *
+   *  The grid shows every viable pair — hundreds of them — while the results
+   *  list carries only a shortlist, because sending a full itinerary for each
+   *  would be a megabyte of payload. So a cell outside the shortlist gets its
+   *  summary from the grid, and an offer to price it properly for one request. */
+  const unpricedPair = useMemo(() => {
+    if (!data || !selection?.ret || visible.length > 0) return null;
+    return (
+      data.matrix.find(
+        (c) =>
+          c.depart_date === selection.depart && c.return_date === selection.ret,
+      ) ?? null
+    );
+  }, [data, selection, visible]);
+
+  /** Turn one grid cell into real itineraries. Costs a single live request. */
+  async function priceCell(cell: MatrixCell) {
+    if (!data) return;
+    const key = `${cell.depart_date}-${cell.return_date}`;
+    setPricingCell(key);
+    setError(null);
+    try {
+      const priced = await resolveDate({
+        origin: data.origin,
+        destination: data.destination,
+        depart_date: cell.depart_date,
+        return_date: cell.return_date,
+        max_stops: maxStops === "" ? null : Number(maxStops),
+      });
+      if (priced.length === 0) {
+        setError(
+          `No flights are being sold for ${cell.depart_date} → ${cell.return_date}.`,
+        );
+        return;
+      }
+      setData((current) =>
+        current
+          ? {
+              ...current,
+              results: bookableFirst([...priced, ...current.results]),
+              live_requests: current.live_requests + 1,
+            }
+          : current,
+      );
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not price that pair");
+    } finally {
+      setPricingCell(null);
+    }
+  }
 
   /** Filters that can only be judged on a date priced for real. */
   const airlineFilterActive =
@@ -527,13 +591,14 @@ export default function Home() {
                   .join(", ")}
               </span>
             )}
-            {selectedDate && (
+            {selection && (
               <button
                 type="button"
-                onClick={() => setSelectedDate(null)}
+                onClick={() => setSelection(null)}
                 className="rounded border border-border-subtle px-2 py-0.5 hover:border-muted"
               >
-                clear {selectedDate}
+                clear {selection.depart}
+                {selection.ret ? ` → ${selection.ret}` : ""}
               </button>
             )}
           </div>
@@ -582,32 +647,116 @@ export default function Home() {
 
           <div className="grid gap-8 lg:grid-cols-[minmax(0,1fr)_minmax(0,420px)]">
             <div>
-              <MonthGrid
-                cells={data.calendar}
-                currency={data.currency}
-                selected={selectedDate}
-                onSelect={(date) =>
-                  setSelectedDate((current) => (current === date ? null : date))
-                }
-              />
+              {data.matrix.length > 0 && (
+                <div className="mb-3 flex gap-1 text-xs">
+                  {(["matrix", "grid"] as const).map((mode) => (
+                    <button
+                      key={mode}
+                      type="button"
+                      onClick={() => setView(mode)}
+                      className={`rounded-full border px-3 py-1 transition ${
+                        view === mode
+                          ? "border-accent bg-accent/15 text-accent"
+                          : "border-border-subtle text-muted hover:border-muted"
+                      }`}
+                    >
+                      {mode === "matrix" ? "Departure × return" : "By departure"}
+                    </button>
+                  ))}
+                </div>
+              )}
+
+              {data.matrix.length > 0 && view === "matrix" ? (
+                <TripMatrix
+                  cells={data.matrix}
+                  currency={data.currency}
+                  selected={
+                    selection?.ret
+                      ? { depart: selection.depart, ret: selection.ret }
+                      : null
+                  }
+                  onSelect={(pair) =>
+                    setSelection((current) =>
+                      current?.depart === pair.depart && current?.ret === pair.ret
+                        ? null
+                        : pair,
+                    )
+                  }
+                />
+              ) : (
+                <MonthGrid
+                  cells={data.calendar}
+                  currency={data.currency}
+                  selected={selection?.ret ? null : (selection?.depart ?? null)}
+                  onSelect={(date) =>
+                    setSelection((current) =>
+                      current?.depart === date && current?.ret === null
+                        ? null
+                        : { depart: date, ret: null },
+                    )
+                  }
+                />
+              )}
             </div>
             <div>
               <h2 className="mb-3 text-sm font-medium text-muted">
-                {selectedDate
-                  ? wantsReturn
-                    ? `Returns for ${selectedDate} — ${visible.length} option${visible.length === 1 ? "" : "s"}`
-                    : `Options on ${selectedDate}`
+                {selection
+                  ? selection.ret
+                    ? `${selection.depart} → ${selection.ret}`
+                    : wantsReturn
+                      ? `Returns for ${selection.depart} — ${visible.length} option${visible.length === 1 ? "" : "s"}`
+                      : `Options on ${selection.depart}`
                   : "Best options"}
               </h2>
-              <ResultsList
-                options={visible}
-                currency={data.currency}
-                onPriceDate={priceDate}
-                pricingDate={pricingCell}
-                wallet={wallet.holdings.length ? wallet : undefined}
-                bestCashAlternative={cheapestCash?.price}
-                bestCashDate={cheapestCash?.date}
-              />
+              {unpricedPair ? (
+                <div className="rounded-lg border border-border-subtle bg-surface p-4">
+                  <div className="flex flex-wrap items-baseline gap-2 text-sm">
+                    <span className="rounded bg-white/5 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-muted">
+                      Estimate
+                    </span>
+                    <span className="font-medium">
+                      {unpricedPair.nights} nights
+                    </span>
+                    <span className="text-muted">
+                      {unpricedPair.stops === 0
+                        ? "nonstop"
+                        : `${unpricedPair.stops} stop`}
+                      {unpricedPair.airline ? ` · ${unpricedPair.airline}` : ""}
+                    </span>
+                    <span className="ml-auto text-lg font-semibold">
+                      {formatMoney(unpricedPair.effective_price, data.currency)}
+                    </span>
+                  </div>
+                  <p className="mt-2 text-xs text-muted">
+                    This pair has not been priced for real yet, so the airline and
+                    aircraft are unknown and the fare may no longer exist.
+                  </p>
+                  <button
+                    type="button"
+                    onClick={() => priceCell(unpricedPair)}
+                    disabled={
+                      pricingCell ===
+                      `${unpricedPair.depart_date}-${unpricedPair.return_date}`
+                    }
+                    className="mt-3 rounded-md border border-accent/50 px-3 py-1.5 text-xs font-medium text-accent transition hover:bg-accent/10 disabled:opacity-60"
+                  >
+                    {pricingCell ===
+                    `${unpricedPair.depart_date}-${unpricedPair.return_date}`
+                      ? "Pricing…"
+                      : "Price this pair"}
+                  </button>
+                </div>
+              ) : (
+                <ResultsList
+                  options={visible}
+                  currency={data.currency}
+                  onPriceDate={priceDate}
+                  pricingDate={pricingCell}
+                  wallet={wallet.holdings.length ? wallet : undefined}
+                  bestCashAlternative={cheapestCash?.price}
+                  bestCashDate={cheapestCash?.date}
+                />
+              )}
             </div>
           </div>
         </>

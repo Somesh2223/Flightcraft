@@ -181,6 +181,45 @@ class LegOut(BaseModel):
 
     @classmethod
     def of(cls, row: FareRow, segments: list[Segment] | None = None) -> LegOut:
+        """One leg of a trip.
+
+        When `segments` are passed explicitly the leg is described by them, not
+        by the row. A round trip priced as a single fare stores both directions
+        on one row whose own fields describe the *outbound*, so reading the row
+        for the return leg reported the wrong date, route, stop count and
+        duration — an inbound leg labelled "Wed 14 Oct DEL→DXB" above a segment
+        list that plainly said DXB→DEL.
+        """
+        if segments is not None and segments:
+            first, last = segments[0], segments[-1]
+            return cls(
+                origin=first.origin,
+                destination=last.destination,
+                depart_date=(
+                    first.departure_local.date()
+                    if first.departure_local
+                    else (row.return_date or row.depart_date)
+                ),
+                # The fare covers the whole journey and is reported on the trip,
+                # so attributing it to one direction would double-count it.
+                price=Decimal(0),
+                stops=max(len(segments) - 1, 0),
+                airline=first.marketing_carrier,
+                airline_name=(
+                    first.operating_carrier_name
+                    or carriers.display_name(first.marketing_carrier)
+                ),
+                carrier_class=carriers.carrier_class(first.marketing_carrier),
+                alliance=carriers.alliance(first.marketing_carrier),
+                flight_number=first.designator,
+                departure_at=first.departure_local,
+                duration_minutes=(
+                    sum(s.duration_minutes or 0 for s in segments) or None
+                ),
+                observed_at=row.observed_at,
+                segments=[SegmentOut.of(s) for s in segments],
+            )
+
         return cls(
             origin=row.origin,
             destination=row.destination,
@@ -195,10 +234,7 @@ class LegOut(BaseModel):
             departure_at=row.departure_at,
             duration_minutes=row.duration_minutes,
             observed_at=row.observed_at,
-            segments=[
-                SegmentOut.of(s)
-                for s in (segments if segments is not None else row.outbound_segments)
-            ],
+            segments=[SegmentOut.of(s) for s in row.outbound_segments],
         )
 
 
@@ -287,6 +323,24 @@ class TripOptionOut(BaseModel):
         )
 
 
+class MatrixCell(BaseModel):
+    """One (departure, return) pair for the two-axis heatmap.
+
+    Deliberately lean. A month against a month is around nine hundred cells, so
+    anything carried here is carried nine hundred times; the full itinerary is
+    fetched from the results list once a cell is picked.
+    """
+
+    depart_date: date
+    return_date: date
+    nights: int
+    price: Decimal
+    effective_price: Decimal
+    stops: int
+    airline: str | None
+    is_live_quote: bool = False
+
+
 class SplitTicketSaving(BaseModel):
     """What booking two one-ways saves over the cheapest single return ticket.
 
@@ -326,6 +380,9 @@ class SearchResponse(BaseModel):
     cheapest: TripOptionOut | None
     results: list[TripOptionOut]
     calendar: list[CalendarCell]
+    # Populated only for a return search: every viable departure/return pair,
+    # which is the surface the calendar can only show one row of.
+    matrix: list[MatrixCell] = Field(default_factory=list)
 
     total_before_filters: int
     filtered_out: dict[str, int]

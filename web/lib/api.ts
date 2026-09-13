@@ -195,6 +195,17 @@ export interface CalendarCell {
   offer_label: string | null;
 }
 
+export interface MatrixCell {
+  depart_date: string;
+  return_date: string;
+  nights: number;
+  price: string;
+  effective_price: string;
+  stops: number;
+  airline: string | null;
+  is_live_quote: boolean;
+}
+
 export interface SearchResponse {
   origin: string;
   destination: string;
@@ -204,6 +215,7 @@ export interface SearchResponse {
   cheapest: TripOption | null;
   results: TripOption[];
   calendar: CalendarCell[];
+  matrix: MatrixCell[];
   total_before_filters: number;
   filtered_out: Record<string, number>;
   needs_deep_scan: boolean;

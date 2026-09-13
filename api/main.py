@@ -26,6 +26,7 @@ from api.reference import carriers, loyalty
 from api.schemas import (
     BookingLinksRequest,
     CalendarCell,
+    MatrixCell,
     PointsAssessRequest,
     ResolveDateRequest,
     SearchRequest,
@@ -55,6 +56,10 @@ async def lifespan(_: FastAPI):
 # How many return dates each departure day carries into the response, so that
 # opening a day on the grid is a genuine choice rather than a single suggestion.
 RETURNS_PER_DATE = 6
+
+# A month against a month is roughly 900 pairs, which draws fine. Beyond this a
+# heatmap stops being readable long before it stops being renderable.
+MATRIX_CELL_LIMIT = 2_500
 
 app = FastAPI(title="Flightcraft", version="0.1.0", lifespan=lifespan)
 
@@ -265,6 +270,30 @@ async def search(request: SearchRequest) -> SearchResponse:
         for option in _cheapest_per_depart_date(kept, payable)
     ]
 
+    matrix: list[MatrixCell] = []
+    if spec.is_return:
+        pairs = [o for o in kept if o.return_date is not None]
+        if len(pairs) > MATRIX_CELL_LIMIT:
+            result.warnings.append(
+                f"The date grid covers {len(pairs):,} departure/return pairs, too "
+                f"many to draw at once. Narrowing the ranges or the trip length "
+                "brings it back."
+            )
+        else:
+            matrix = [
+                MatrixCell(
+                    depart_date=o.depart_date,
+                    return_date=o.return_date,
+                    nights=o.nights if o.nights is not None else 0,
+                    price=o.total_price,
+                    effective_price=payable(o),
+                    stops=o.max_stops,
+                    airline=o.outbound.airline,
+                    is_live_quote=o.is_live_quote,
+                )
+                for o in pairs
+            ]
+
     # Every day drawn on the calendar has to be openable, and opening one has to
     # show a real choice of return dates rather than the single cheapest. The
     # results list is capped globally, so without this a day whose best option
@@ -306,6 +335,7 @@ async def search(request: SearchRequest) -> SearchResponse:
         cheapest=results[0] if results else None,
         results=results,
         calendar=calendar,
+        matrix=matrix,
         total_before_filters=len(unfiltered),
         filtered_out=removed,
         # Airline and aircraft filters can only judge a date that has been priced
