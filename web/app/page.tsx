@@ -13,6 +13,7 @@ import {
   SearchRequest,
   SearchResponse,
   TripOption,
+  formatMoney,
   resolveDate,
   search,
 } from "@/lib/api";
@@ -458,6 +459,23 @@ export default function Home() {
               </button>
             )}
           </div>
+
+          {data.split_ticket_saving && (
+            <div className="mb-6 rounded-lg border border-emerald-500/40 bg-emerald-500/10 p-4 text-sm">
+              <strong className="font-semibold text-emerald-300">
+                Two one-way tickets save{" "}
+                {formatMoney(data.split_ticket_saving.saving, data.currency)}.
+              </strong>{" "}
+              <span className="text-emerald-100/80">
+                Booking {data.split_ticket_saving.depart_date} out and{" "}
+                {data.split_ticket_saving.return_date} back separately costs{" "}
+                {formatMoney(data.split_ticket_saving.two_one_ways, data.currency)},
+                against{" "}
+                {formatMoney(data.split_ticket_saving.round_trip, data.currency)} for
+                the cheapest single return ticket. Both prices are verified.
+              </span>
+            </div>
+          )}
 
           {data.needs_deep_scan && (
             <div className="mb-6 flex flex-wrap items-center gap-3 rounded-lg border border-accent/40 bg-accent/10 p-4 text-sm">

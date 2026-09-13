@@ -229,6 +229,20 @@ class TripOptionOut(BaseModel):
         )
 
 
+class SplitTicketSaving(BaseModel):
+    """What booking two one-ways saves over the cheapest single return ticket.
+
+    Only reported when both were priced for real, since comparing a verified
+    fare against an estimate would invent a saving that may not exist.
+    """
+
+    saving: Decimal
+    two_one_ways: Decimal
+    round_trip: Decimal
+    depart_date: date
+    return_date: date
+
+
 class CalendarCell(BaseModel):
     """One day of the month grid."""
 
@@ -259,6 +273,7 @@ class SearchResponse(BaseModel):
     # live-quote cache. Surfaced because they are what the search actually costs.
     live_requests: int = 0
     live_cache_hits: int = 0
+    split_ticket_saving: SplitTicketSaving | None = None
     # New rows added to the price history by this scan. Visible so the user can
     # see the dataset growing, since the timing signal is worthless until it has.
     observations_recorded: int = 0

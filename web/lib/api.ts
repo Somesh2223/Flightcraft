@@ -81,6 +81,14 @@ export interface TripOption {
   duration_minutes: number | null;
 }
 
+export interface SplitTicketSaving {
+  saving: string;
+  two_one_ways: string;
+  round_trip: string;
+  depart_date: string;
+  return_date: string;
+}
+
 export interface CalendarCell {
   depart_date: string;
   price: string;
@@ -105,6 +113,7 @@ export interface SearchResponse {
   demo_mode: boolean;
   live_requests: number;
   live_cache_hits: number;
+  split_ticket_saving: SplitTicketSaving | null;
   observations_recorded: number;
   warnings: string[];
 }

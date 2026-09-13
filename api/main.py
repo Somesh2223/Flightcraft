@@ -29,6 +29,7 @@ from api.schemas import (
     ResolveDateRequest,
     SearchRequest,
     SearchResponse,
+    SplitTicketSaving,
     TripOptionOut,
 )
 from api.storage import db
@@ -139,13 +140,21 @@ async def search(request: SearchRequest) -> SearchResponse:
             resolution = await resolve.resolve(
                 ignav, spec, unfiltered, request.depth, filter_set
             )
-        live_options = datespace.build_options(
-            [r for r in resolution.rows if not r.is_round_trip],
-            None,
-        ) + [
-            TripOption.from_fare(r) for r in resolution.rows if r.is_round_trip
-        ]
-        resolved_cells = resolution.cells
+        # Live legs are paired by exactly the same rules as the cached ones, so
+        # a two-month trip built from two real one-ways competes directly with
+        # the single round-trip tickets probed alongside it.
+        # Collapsed per kind, not per cell: a round-trip ticket and a pair of
+        # one-ways covering the same dates are different products, and keeping
+        # only the cheaper would erase the comparison between them.
+        live_options = datespace.collapse_to_best_per_cell(
+            assemble(
+                resolution.outbound_rows,
+                resolution.inbound_rows if spec.is_return else None,
+            )
+        ) + datespace.collapse_to_best_per_cell(
+            [TripOption.from_fare(r) for r in resolution.round_trip_rows]
+        )
+        resolved_cells = resolve.cells_of(live_options)
         live_requests = resolution.requests
         live_cache_hits = resolution.cached_cells
         result.provider_calls += resolution.requests
@@ -183,6 +192,11 @@ async def search(request: SearchRequest) -> SearchResponse:
     outcome = filters.apply(
         resolve.merge(cached_options, live_options, resolved_cells), filter_set
     )
+    # Measured before collapsing, because collapsing keeps only the cheapest
+    # option per cell — which deletes the round-trip ticket exactly when the
+    # split beats it, leaving nothing to compare against.
+    saving = _split_ticket_saving(outcome.kept)
+
     kept = datespace.bookable_first(
         datespace.collapse_to_best_per_cell(outcome.kept)
     )
@@ -237,6 +251,7 @@ async def search(request: SearchRequest) -> SearchResponse:
         demo_mode=config.DEMO_MODE,
         live_requests=live_requests,
         live_cache_hits=live_cache_hits,
+        split_ticket_saving=saving,
         observations_recorded=recorded,
         warnings=result.warnings,
     )
@@ -248,48 +263,40 @@ async def resolve_date(request: ResolveDateRequest) -> list[TripOptionOut]:
     if not config.IGNAV_API_KEY:
         raise HTTPException(status_code=503, detail="live pricing is not configured")
 
-    spec = SearchSpec(
-        origin=request.origin,
-        destination=request.destination,
-        outbound=DateRange(start=request.depart_date, end=request.depart_date),
-        currency=request.currency,
-        passengers=request.passengers,
-    )
-    filter_set = FilterSet(
-        max_stops=request.max_stops, include_airlines=request.include_airlines
-    )
-    seed = [
-        TripOption.from_fare(
-            FareRow(
-                origin=spec.origin,
-                destination=spec.destination,
-                depart_date=request.depart_date,
-                return_date=request.return_date,
-                price=Decimal(0),
-                currency=spec.currency,
-                source="seed",
-                observed_at=datetime.now(timezone.utc),
-            )
-        )
-    ]
+    filters: dict = {"adults": request.passengers, "market": config.DEFAULT_MARKET}
+    if request.max_stops is not None:
+        filters["max_stops"] = request.max_stops
+    if request.include_airlines:
+        filters["airlines_include"] = sorted(c.upper() for c in request.include_airlines)
 
     try:
         async with IgnavClient() as client:
-            result = await resolve.resolve(
-                client, spec, seed, ScanDepth.STANDARD, filter_set, limit=1
-            )
+            # A cell with a return date is priced as one journey: that is the
+            # pair the traveller pointed at, and one request answers it.
+            if request.return_date is not None:
+                rows = await client.round_trip(
+                    request.origin,
+                    request.destination,
+                    request.depart_date,
+                    request.return_date,
+                    request.currency,
+                    **filters,
+                )
+            else:
+                rows = await client.one_way(
+                    request.origin,
+                    request.destination,
+                    request.depart_date,
+                    request.currency,
+                    **filters,
+                )
     except IgnavError as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
 
-    if result.warnings and not result.rows:
-        raise HTTPException(status_code=502, detail=result.warnings[0])
-
-    options = [
-        TripOption.from_fare(row) if row.is_round_trip else TripOption.from_fare(row)
-        for row in result.rows
-    ]
-    options.sort(key=lambda o: o.total_price)
-    return [TripOptionOut.of(o, spec.passengers) for o in options]
+    options = sorted(
+        (TripOption.from_fare(row) for row in rows), key=lambda o: o.total_price
+    )
+    return [TripOptionOut.of(o, request.passengers) for o in options]
 
 
 @app.post("/api/booking-links")
@@ -371,6 +378,34 @@ async def _price_contexts(store, spec, options: list) -> dict[int, object]:
             )
 
     return contexts
+
+
+def _split_ticket_saving(options: list) -> SplitTicketSaving | None:
+    """Compare the best pair of one-ways against the best single return ticket.
+
+    Airlines price a return as one product and two singles as another, and on
+    long gaps the singles often win by a wide margin — the case this app exists
+    to surface. Both sides must be verified fares: measuring a real price against
+    a cached estimate would report a saving that might not survive checkout.
+    """
+    verified = [o for o in options if o.is_live_quote and o.return_date is not None]
+    split = [o for o in verified if o.kind == "combined_one_ways"]
+    single = [o for o in verified if o.kind == "round_trip"]
+    if not split or not single:
+        return None
+
+    best_split = min(split, key=lambda o: o.total_price)
+    best_single = min(single, key=lambda o: o.total_price)
+    if best_split.total_price >= best_single.total_price:
+        return None
+
+    return SplitTicketSaving(
+        saving=best_single.total_price - best_split.total_price,
+        two_one_ways=best_split.total_price,
+        round_trip=best_single.total_price,
+        depart_date=best_split.depart_date,
+        return_date=best_split.return_date,
+    )
 
 
 def _cheapest_per_depart_date(options: list) -> list:

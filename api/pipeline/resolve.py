@@ -38,11 +38,30 @@ RESOLVE_LIMITS: dict[ScanDepth, int] = {
 
 
 class ResolveResult(BaseModel):
-    rows: list[FareRow] = Field(default_factory=list)
-    cells: list[tuple[date, date | None]] = Field(default_factory=list)
+    """Live rows, kept per direction so the caller can pair them.
+
+    Pairing is deliberately left to the caller rather than done here: which
+    combinations are legal depends on the trip-length constraints, and the
+    resolved cells then fall out of the pairing instead of being predicted.
+    """
+
+    outbound_rows: list[FareRow] = Field(default_factory=list)
+    inbound_rows: list[FareRow] = Field(default_factory=list)
+    round_trip_rows: list[FareRow] = Field(default_factory=list)
     requests: int = 0
     cached_cells: int = 0
     warnings: list[str] = Field(default_factory=list)
+
+    @property
+    def any_rows(self) -> bool:
+        return bool(self.outbound_rows or self.inbound_rows or self.round_trip_rows)
+
+
+# For a return search, a couple of requests go on pricing the best cells as a
+# single round-trip ticket. Airlines often price a return far below two separate
+# one-ways, and missing that would hand the traveller the wrong answer on
+# exactly the long-gap trips this app is built for.
+ROUND_TRIP_PROBES = 2
 
 
 # Live quotes are cached briefly because every miss costs a paid request, and
@@ -101,6 +120,35 @@ def candidate_cells(
     return cells
 
 
+def candidate_dates(
+    options: list[TripOption], limit: int
+) -> tuple[list[date], list[date]]:
+    """Best departure and return dates, taken separately.
+
+    Pricing legs rather than pairs is what makes a two-month search affordable.
+    Ten requests spent on pairs buys ten cells; the same ten split across the two
+    directions buys twenty-five, because every priced outbound can be matched
+    against every priced return. That combinatorial gain is the whole reason the
+    independent-months feature is practical at all.
+    """
+    out_seen: dict[date, None] = {}
+    in_seen: dict[date, None] = {}
+
+    for option in options:
+        if len(out_seen) < limit and option.depart_date not in out_seen:
+            out_seen[option.depart_date] = None
+        if (
+            option.return_date is not None
+            and len(in_seen) < limit
+            and option.return_date not in in_seen
+        ):
+            in_seen[option.return_date] = None
+        if len(out_seen) >= limit and len(in_seen) >= limit:
+            break
+
+    return list(out_seen), list(in_seen)
+
+
 def _provider_filters(spec: SearchSpec, filter_set: FilterSet | None) -> dict:
     """Push filters upstream so a paid request returns usable itineraries.
 
@@ -122,6 +170,22 @@ def _provider_filters(spec: SearchSpec, filter_set: FilterSet | None) -> dict:
     return filters
 
 
+class _Job(BaseModel):
+    """One paid lookup: a leg on a date, or a whole round trip."""
+
+    model_config = {"arbitrary_types_allowed": True}
+
+    origin: str
+    destination: str
+    depart: date
+    ret: date | None = None
+    lane: str  # "outbound", "inbound", or "round_trip"
+
+    @property
+    def key(self) -> tuple:
+        return (self.origin, self.destination, self.depart, self.ret)
+
+
 async def resolve(
     client: IgnavClient,
     spec: SearchSpec,
@@ -130,75 +194,136 @@ async def resolve(
     filter_set: FilterSet | None = None,
     limit: int | None = None,
 ) -> ResolveResult:
-    """Price the best cells exactly. Failures degrade to the cached estimate."""
+    """Price the best dates exactly. Failures degrade to the cached estimate."""
     budget = limit if limit is not None else RESOLVE_LIMITS.get(depth, 0)
     if budget <= 0 or not options:
         return ResolveResult()
 
-    cells = candidate_cells(options, budget)
-    if not cells:
+    filters = _provider_filters(spec, filter_set)
+    jobs = _plan(spec, options, budget)
+    if not jobs:
         return ResolveResult()
 
-    filters = _provider_filters(spec, filter_set)
-    rows: list[FareRow] = []
+    lanes: dict[str, list[FareRow]] = {
+        "outbound": [],
+        "inbound": [],
+        "round_trip": [],
+    }
     warnings: list[str] = []
-    resolved: list[tuple[date, date | None]] = []
-
-    to_fetch: list[tuple[date, date | None]] = []
     reused = 0
-    for cell in cells:
-        hit = _cached(_cache_key(spec, cell, filters))
+    to_fetch: list[_Job] = []
+
+    for job in jobs:
+        hit = _cached(_cache_key(spec, job.key, filters))
         if hit is None:
-            to_fetch.append(cell)
+            to_fetch.append(job)
         else:
             reused += 1
-            if hit:
-                resolved.append(cell)
-                rows.extend(hit)
+            lanes[job.lane].extend(hit)
 
-    async def price(cell: tuple[date, date | None]) -> list[FareRow]:
-        depart, ret = cell
-        if ret is None:
+    async def price(job: _Job) -> list[FareRow]:
+        if job.ret is None:
             return await client.one_way(
-                spec.origin, spec.destination, depart, spec.currency, **filters
+                job.origin, job.destination, job.depart, spec.currency, **filters
             )
         return await client.round_trip(
-            spec.origin, spec.destination, depart, ret, spec.currency, **filters
+            job.origin, job.destination, job.depart, job.ret, spec.currency, **filters
         )
 
     batches = await asyncio.gather(
-        *(price(cell) for cell in to_fetch), return_exceptions=True
+        *(price(job) for job in to_fetch), return_exceptions=True
     )
 
-    for cell, batch in zip(to_fetch, batches):
+    for job, batch in zip(to_fetch, batches):
         if isinstance(batch, BaseException):
-            label = f"{cell[0]}" + (f" / {cell[1]}" if cell[1] else "")
+            label = f"{job.origin}-{job.destination} {job.depart}"
             detail = str(batch) if isinstance(batch, IgnavError) else repr(batch)
             warnings.append(f"live pricing failed for {label}: {detail[:160]}")
             continue
         # An empty answer is cached too: the absence of flights is itself worth
         # knowing, and re-asking would spend a request to learn it again.
-        _CACHE[_cache_key(spec, cell, filters)] = (datetime.now(timezone.utc), batch)
-        if batch:
-            # Only a cell that actually produced fares counts as resolved; an
-            # empty answer must leave the cached estimate in place rather than
-            # blanking the date.
-            resolved.append(cell)
-            rows.extend(batch)
-
-    if warnings and not rows:
-        warnings.append(
-            "Live pricing is unavailable right now, so prices below are cached "
-            "estimates and may not be bookable at these fares."
+        _CACHE[_cache_key(spec, job.key, filters)] = (
+            datetime.now(timezone.utc),
+            batch,
         )
+        lanes[job.lane].extend(batch)
 
-    return ResolveResult(
-        rows=rows,
-        cells=resolved,
+    result = ResolveResult(
+        outbound_rows=lanes["outbound"],
+        inbound_rows=lanes["inbound"],
+        round_trip_rows=lanes["round_trip"],
         requests=len(to_fetch),
         cached_cells=reused,
         warnings=warnings,
     )
+
+    if warnings and not result.any_rows:
+        result.warnings.append(
+            "Live pricing is unavailable right now, so prices below are cached "
+            "estimates and may not be bookable at these fares."
+        )
+
+    return result
+
+
+def _plan(spec: SearchSpec, options: list[TripOption], budget: int) -> list[_Job]:
+    """Decide what to spend the budget on."""
+    if not spec.is_return:
+        return [
+            _Job(
+                origin=spec.origin,
+                destination=spec.destination,
+                depart=depart,
+                lane="outbound",
+            )
+            for depart, _ in candidate_cells(options, budget)
+        ]
+
+    probes = min(ROUND_TRIP_PROBES, max(budget - 2, 0))
+    per_direction = max((budget - probes) // 2, 1)
+    out_dates, in_dates = candidate_dates(options, per_direction)
+
+    jobs = [
+        _Job(
+            origin=spec.origin,
+            destination=spec.destination,
+            depart=day,
+            lane="outbound",
+        )
+        for day in out_dates
+    ] + [
+        _Job(
+            origin=spec.destination,
+            destination=spec.origin,
+            depart=day,
+            lane="inbound",
+        )
+        for day in in_dates
+    ]
+
+    for depart, ret in candidate_cells(options, probes):
+        if ret is not None:
+            jobs.append(
+                _Job(
+                    origin=spec.origin,
+                    destination=spec.destination,
+                    depart=depart,
+                    ret=ret,
+                    lane="round_trip",
+                )
+            )
+
+    return jobs
+
+
+def cells_of(options: list[TripOption]) -> list[tuple[date, date | None]]:
+    """Which cells a set of live options actually covers.
+
+    Derived from the options rather than predicted before pairing, because the
+    trip-length rules decide which combinations survive and only the pairing
+    knows that.
+    """
+    return [(o.depart_date, o.return_date) for o in options]
 
 
 def merge(
