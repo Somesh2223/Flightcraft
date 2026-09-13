@@ -1,4 +1,4 @@
-"""Fareloom HTTP API."""
+"""Flightcraft HTTP API."""
 from __future__ import annotations
 
 from contextlib import asynccontextmanager
@@ -52,7 +52,7 @@ async def lifespan(_: FastAPI):
     await db.dispose()
 
 
-app = FastAPI(title="Fareloom", version="0.1.0", lifespan=lifespan)
+app = FastAPI(title="Flightcraft", version="0.1.0", lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,

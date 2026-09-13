@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "Fareloom",
+  title: "Flightcraft",
   description:
     "Scan whole months of fares, then filter by stops, airline, carrier type and aircraft.",
 };

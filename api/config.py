@@ -45,7 +45,7 @@ OPENSKY_CLIENT_ID = os.getenv("OPENSKY_CLIENT_ID", "")
 OPENSKY_CLIENT_SECRET = os.getenv("OPENSKY_CLIENT_SECRET", "")
 
 # --- Storage ---
-DATABASE_URL = os.getenv("DATABASE_URL", "") or f"sqlite+aiosqlite:///{DATA_DIR / 'fareloom.db'}"
+DATABASE_URL = os.getenv("DATABASE_URL", "") or f"sqlite+aiosqlite:///{DATA_DIR / 'flightcraft.db'}"
 
 # --- Defaults ---
 DEFAULT_CURRENCY = os.getenv("DEFAULT_CURRENCY", "inr").lower()
@@ -68,7 +68,7 @@ SWEEP_HOUR = int(os.getenv("SWEEP_HOUR", "3"))
 
 # Synthetic fares, so the app runs before a Travelpayouts token exists. Falls
 # back automatically rather than erroring, but every response says so.
-_DEMO_FLAG = os.getenv("FARELOOM_DEMO", "").strip().lower()
+_DEMO_FLAG = os.getenv("FLIGHTCRAFT_DEMO", "").strip().lower()
 DEMO_MODE = _DEMO_FLAG in ("1", "true", "yes") or (
     _DEMO_FLAG not in ("0", "false", "no") and not TRAVELPAYOUTS_TOKEN
 )

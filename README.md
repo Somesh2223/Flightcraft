@@ -1,4 +1,4 @@
-# Fareloom
+# Flightcraft
 
 A flight search engine built around scanning **date spaces** rather than dates.
 
@@ -7,7 +7,7 @@ They offer a cheapest-in-a-month calendar, but you cannot put constraints on it 
 ask for *"the cheapest day in November, no more than one stop, on a widebody,
 excluding budget carriers"* and you're back to searching one date at a time.
 
-Fareloom inverts that. Scanning a range and then filtering it is the core
+Flightcraft inverts that. Scanning a range and then filtering it is the core
 primitive, so every feature is the same pipeline with a different filter:
 
 ```
@@ -95,15 +95,14 @@ each one changed the design:
 - **One-way and round-trip fares are mixed together** in the same responses, and
   are not comparable. A one-way search must therefore discard round-trip fares
   rather than show a roughly doubled price.
-- **Airline attribution is, in practice, unavailable.** The only endpoint that
-  names an airline (`cheap`) prices round trips, refuses any trip longer than
-  30 nights, and returns nothing at all for most date pairs. So the airline,
-  carrier-type and alliance filters work only on the rare attributed fare.
-  This is a property of the data source, not a gap in the code — see the
-  roadmap.
+- **Airline attribution is unavailable from the cached feed.** The only endpoint
+  that names an airline prices round trips, refuses any trip longer than 30
+  nights, and returns nothing for most date pairs — so it is not used at all.
+  Attribution comes from stage two instead.
 
-Filters that need an airline reject unattributed fares rather than guess, and
-the count is reported separately so the UI can explain itself.
+Filters that need an airline or an aircraft reject unattributed fares rather
+than guess, and the count is reported separately so the UI can offer to price
+more dates instead of silently showing less.
 
 ## Running it
 
@@ -134,24 +133,38 @@ Then open http://localhost:3000.
 api/
   domain.py              canonical types: SearchSpec, DateRange, FareRow, TripOption
   providers/
-    travelpayouts.py     the real data source, normalised into FareRow
+    travelpayouts.py     stage one — cached fares, wide and free
+    ignav.py             stage two — live itineraries with carrier and aircraft
     demo.py              deterministic synthetic fares for running without a token
   pipeline/
-    scan.py              tiered provider fan-out
+    scan.py              stage-one fan-out across the date space
+    resolve.py           stage-two targeting: which cells are worth paying for
     filters.py           composable filters, and an account of what they removed
   engines/
     datespace.py         pairing independent date ranges into trip options
-  reference/carriers.py  carrier class and alliance lookups
-  data/carriers.yaml     curated carrier reference data, India-first
+    history.py           price history, and the book-now-or-wait verdict
+    points.py            valuing a redemption against the whole cash scan
+    offers.py            card offers, and the re-ranking they cause
+  reference/
+    carriers.py          carrier class and alliance lookups
+    aircraft.py          classifying "Airbus A321neo" into family and body type
+    loyalty.py           which points can book which carrier
+    places.py            airport-to-city resolution
+  data/                  curated reference data, India-first
 web/                     Next.js frontend
 ```
 
-Two ordering rules in the pipeline are load-bearing and easy to get wrong:
+Four ordering rules in the pipeline are load-bearing and easy to get wrong.
+Each one was a real bug before it was a rule:
 
-- **Filter fares before pairing them.** Options keep the cheapest fare per date,
-  so filtering afterwards judges a date by a fare the traveller already excluded
-  — asking for one stop would delete a date whose *cheapest* fare has two, even
-  when a one-stop fare exists that day.
+- **Filter fares before pairing or collapsing them.** Options keep the cheapest
+  fare per date, so filtering afterwards judges a date by a fare the traveller
+  already excluded — a budget-only search on a day where Gulf Air is cheapest
+  and IndiGo also flies would drop the day rather than offer the IndiGo seat.
+- **Rank on the price you can actually pay**: a verified fare before a cheaper
+  estimate, and after any card offer.
+- **Measure the split-ticket saving before collapsing**, because collapsing
+  deletes the round-trip ticket exactly when the split beats it.
 - **Price is a trip-level filter**, never a per-leg one.
 
 ## Roadmap

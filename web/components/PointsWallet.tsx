@@ -4,7 +4,7 @@ import { useEffect, useState } from "react";
 
 import { Holding, LoyaltyProgram, Wallet, listPrograms } from "@/lib/api";
 
-const STORAGE_KEY = "fareloom.wallet";
+const STORAGE_KEY = "flightcraft.wallet";
 
 /** Balances stay in this browser. They are personal, and the server has no
  *  account to attach them to — it only ever sees them for the length of a
@@ -172,7 +172,7 @@ export default function PointsWallet({
           </label>
 
           <p className="rounded-lg border border-border-subtle bg-surface-raised p-3 text-xs text-muted">
-            Balances are kept in this browser only. Fareloom shows which
+            Balances are kept in this browser only. Flightcraft shows which
             programmes <em>could</em> book a flight — whether an award seat is
             actually free is a separate question no free data source answers, so
             check the airline before counting on it.

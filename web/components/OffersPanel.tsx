@@ -4,7 +4,7 @@ import { useState } from "react";
 
 import { Offer, formatMoney } from "@/lib/api";
 
-const STORAGE_KEY = "fareloom.offers";
+const STORAGE_KEY = "flightcraft.offers";
 
 /** Offers live in this browser. They are personal to the cards someone holds,
  *  expire within weeks, and no source publishes them — so they are entered from
@@ -235,7 +235,7 @@ export default function OffersPanel({
           {error && <p className="text-xs text-amber-300">{error}</p>}
 
           <p className="rounded-lg border border-border-subtle bg-surface-raised p-3 text-xs text-muted">
-            Copy the terms from your bank&apos;s own offer page. Fareloom ranks
+            Copy the terms from your bank&apos;s own offer page. Flightcraft ranks
             dates by what you would actually pay, so an offer can move a pricier
             fare to the top — but it only knows what you tell it, offers are
             assumed not to stack, and an expiry date is enforced rather than
