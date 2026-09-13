@@ -1,0 +1,115 @@
+# Carrier reference data.
+#
+# `class` drives the budget-vs-full-service filter. It is a judgement call at
+# the margins, so the rule used here is: does the base fare normally include a
+# checked bag and a meal? Carriers that sell those separately but still offer a
+# real business cabin are `hybrid` rather than `low_cost`.
+#
+# `alliance` drives mileage earn/burn in the points engine.
+#
+# India-first by design: Indian carriers and the routes Indian travellers
+# actually fly are complete; the rest is the long-haul network they connect to.
+
+carriers:
+  # --- India ---
+  6E: { name: IndiGo, class: low_cost, country: IN }
+  AI: { name: Air India, class: full_service, alliance: star_alliance, country: IN }
+  IX: { name: Air India Express, class: low_cost, country: IN }
+  QP: { name: Akasa Air, class: low_cost, country: IN }
+  SG: { name: SpiceJet, class: low_cost, country: IN }
+
+  # --- Gulf and Middle East ---
+  EK: { name: Emirates, class: full_service, country: AE }
+  EY: { name: Etihad Airways, class: full_service, country: AE }
+  QR: { name: Qatar Airways, class: full_service, alliance: oneworld, country: QA }
+  FZ: { name: flydubai, class: hybrid, country: AE }
+  G9: { name: Air Arabia, class: low_cost, country: AE }
+  WY: { name: Oman Air, class: full_service, alliance: oneworld, country: OM }
+  GF: { name: Gulf Air, class: full_service, country: BH }
+  SV: { name: Saudia, class: full_service, alliance: skyteam, country: SA }
+  XY: { name: flynas, class: low_cost, country: SA }
+  J9: { name: Jazeera Airways, class: low_cost, country: KW }
+  KU: { name: Kuwait Airways, class: full_service, country: KW }
+  LY: { name: El Al, class: full_service, country: IL }
+
+  # --- South Asia ---
+  UL: { name: SriLankan Airlines, class: full_service, alliance: oneworld, country: LK }
+  BG: { name: Biman Bangladesh, class: full_service, country: BD }
+  PK: { name: Pakistan International, class: full_service, country: PK }
+  RA: { name: Nepal Airlines, class: full_service, country: NP }
+  U4: { name: Buddha Air, class: low_cost, country: NP }
+
+  # --- Southeast and East Asia ---
+  SQ: { name: Singapore Airlines, class: full_service, alliance: star_alliance, country: SG }
+  TR: { name: Scoot, class: low_cost, country: SG }
+  TG: { name: Thai Airways, class: full_service, alliance: star_alliance, country: TH }
+  FD: { name: Thai AirAsia, class: low_cost, country: TH }
+  MH: { name: Malaysia Airlines, class: full_service, alliance: oneworld, country: MY }
+  AK: { name: AirAsia, class: low_cost, country: MY }
+  D7: { name: AirAsia X, class: low_cost, country: MY }
+  VN: { name: Vietnam Airlines, class: full_service, alliance: skyteam, country: VN }
+  VJ: { name: VietJet Air, class: low_cost, country: VN }
+  GA: { name: Garuda Indonesia, class: full_service, alliance: skyteam, country: ID }
+  QZ: { name: Indonesia AirAsia, class: low_cost, country: ID }
+  PR: { name: Philippine Airlines, class: full_service, country: PH }
+  5J: { name: Cebu Pacific, class: low_cost, country: PH }
+  CX: { name: Cathay Pacific, class: full_service, alliance: oneworld, country: HK }
+  HX: { name: Hong Kong Airlines, class: full_service, country: HK }
+  NH: { name: ANA, class: full_service, alliance: star_alliance, country: JP }
+  JL: { name: Japan Airlines, class: full_service, alliance: oneworld, country: JP }
+  KE: { name: Korean Air, class: full_service, alliance: skyteam, country: KR }
+  OZ: { name: Asiana Airlines, class: full_service, alliance: star_alliance, country: KR }
+  BR: { name: EVA Air, class: full_service, alliance: star_alliance, country: TW }
+  CI: { name: China Airlines, class: full_service, alliance: skyteam, country: TW }
+  CA: { name: Air China, class: full_service, alliance: star_alliance, country: CN }
+  MU: { name: China Eastern, class: full_service, alliance: skyteam, country: CN }
+  CZ: { name: China Southern, class: full_service, country: CN }
+  HU: { name: Hainan Airlines, class: full_service, country: CN }
+
+  # --- Europe ---
+  BA: { name: British Airways, class: full_service, alliance: oneworld, country: GB }
+  VS: { name: Virgin Atlantic, class: full_service, alliance: skyteam, country: GB }
+  LH: { name: Lufthansa, class: full_service, alliance: star_alliance, country: DE }
+  LX: { name: Swiss, class: full_service, alliance: star_alliance, country: CH }
+  OS: { name: Austrian Airlines, class: full_service, alliance: star_alliance, country: AT }
+  AF: { name: Air France, class: full_service, alliance: skyteam, country: FR }
+  KL: { name: KLM, class: full_service, alliance: skyteam, country: NL }
+  AZ: { name: ITA Airways, class: full_service, alliance: skyteam, country: IT }
+  IB: { name: Iberia, class: full_service, alliance: oneworld, country: ES }
+  TP: { name: TAP Air Portugal, class: full_service, alliance: star_alliance, country: PT }
+  SK: { name: SAS, class: full_service, alliance: skyteam, country: SE }
+  AY: { name: Finnair, class: full_service, alliance: oneworld, country: FI }
+  TK: { name: Turkish Airlines, class: full_service, alliance: star_alliance, country: TR }
+  PC: { name: Pegasus Airlines, class: low_cost, country: TR }
+  LO: { name: LOT Polish Airlines, class: full_service, alliance: star_alliance, country: PL }
+  A3: { name: Aegean Airlines, class: full_service, alliance: star_alliance, country: GR }
+  SU: { name: Aeroflot, class: full_service, country: RU }
+  FR: { name: Ryanair, class: low_cost, country: IE }
+  U2: { name: easyJet, class: low_cost, country: GB }
+  W6: { name: Wizz Air, class: low_cost, country: HU }
+  VY: { name: Vueling, class: low_cost, country: ES }
+  DY: { name: Norwegian, class: low_cost, country: 'NO' }
+
+  # --- North America ---
+  AA: { name: American Airlines, class: full_service, alliance: oneworld, country: US }
+  UA: { name: United Airlines, class: full_service, alliance: star_alliance, country: US }
+  DL: { name: Delta Air Lines, class: full_service, alliance: skyteam, country: US }
+  AS: { name: Alaska Airlines, class: full_service, alliance: oneworld, country: US }
+  B6: { name: JetBlue, class: hybrid, country: US }
+  WN: { name: Southwest Airlines, class: low_cost, country: US }
+  NK: { name: Spirit Airlines, class: low_cost, country: US }
+  F9: { name: Frontier Airlines, class: low_cost, country: US }
+  AC: { name: Air Canada, class: full_service, alliance: star_alliance, country: CA }
+  WS: { name: WestJet, class: hybrid, country: CA }
+
+  # --- Africa and Oceania ---
+  ET: { name: Ethiopian Airlines, class: full_service, alliance: star_alliance, country: ET }
+  KQ: { name: Kenya Airways, class: full_service, alliance: skyteam, country: KE }
+  MS: { name: EgyptAir, class: full_service, alliance: star_alliance, country: EG }
+  AT: { name: Royal Air Maroc, class: full_service, alliance: oneworld, country: MA }
+  SA: { name: South African Airways, class: full_service, country: ZA }
+  MK: { name: Air Mauritius, class: full_service, country: MU }
+  QF: { name: Qantas, class: full_service, alliance: oneworld, country: AU }
+  JQ: { name: Jetstar, class: low_cost, country: AU }
+  VA: { name: Virgin Australia, class: hybrid, country: AU }
+  NZ: { name: Air New Zealand, class: full_service, alliance: star_alliance, country: NZ }

@@ -79,7 +79,77 @@ export interface TripOption {
   is_live_quote: boolean;
   provider_ref: string | null;
   duration_minutes: number | null;
+  points_options: Eligibility[];
 }
+
+export interface LoyaltyProgram {
+  code: string;
+  name: string;
+  label: string;
+  airline: string;
+  books_alliance: string | null;
+  currency_pool: string | null;
+  books_award_seats: boolean;
+}
+
+export interface Holding {
+  program: string;
+  balance: number;
+}
+
+export interface Wallet {
+  holdings: Holding[];
+  baseline_per_point?: number | null;
+}
+
+export interface Eligibility {
+  program: string;
+  label: string;
+  balance: number;
+  note: string;
+}
+
+export type PointsVerdict =
+  | "strong"
+  | "fair"
+  | "poor"
+  | "worse_than_cash"
+  | "not_enough"
+  | "unknown";
+
+export interface PointsAssessment {
+  program: string;
+  label: string;
+  points: number;
+  cash_component: string;
+  balance: number;
+  shortfall: number;
+  cash_price: string;
+  best_cash_alternative: string | null;
+  best_cash_date: string | null;
+  value_per_point: string;
+  value_per_point_flexible: string | null;
+  verdict: PointsVerdict;
+  note: string;
+}
+
+export const POINTS_VERDICT_STYLE: Record<
+  PointsVerdict,
+  { label: string; className: string }
+> = {
+  strong: {
+    label: "Strong redemption",
+    className: "bg-emerald-400/20 text-emerald-200 ring-1 ring-emerald-400/40",
+  },
+  fair: { label: "Fair redemption", className: "bg-emerald-500/15 text-emerald-300" },
+  poor: { label: "Cash is better", className: "bg-amber-500/15 text-amber-300" },
+  worse_than_cash: {
+    label: "Costs more than cash",
+    className: "bg-rose-500/20 text-rose-200 ring-1 ring-rose-400/40",
+  },
+  not_enough: { label: "Not enough points", className: "bg-white/5 text-muted" },
+  unknown: { label: "Value", className: "bg-white/5 text-muted" },
+};
 
 export interface SplitTicketSaving {
   saving: string;
@@ -154,6 +224,7 @@ export interface SearchRequest {
   currency?: string;
   passengers?: number;
   limit?: number;
+  wallet?: Wallet | null;
 }
 
 export interface ResolveDateRequest {
@@ -213,6 +284,24 @@ export function bookingLinks(providerRef: string): Promise<{ links: BookingLink[
   });
 }
 
+export function listPrograms(): Promise<{ programs: LoyaltyProgram[] }> {
+  return request("/api/loyalty/programs");
+}
+
+/** Value an award the traveller is looking at, against the whole cash scan. */
+export function assessPoints(body: {
+  wallet: Wallet;
+  quote: { program: string; points: number; cash_component: number };
+  cash_price: number;
+  best_cash_alternative?: number | null;
+  best_cash_date?: string | null;
+}): Promise<PointsAssessment> {
+  return request<PointsAssessment>("/api/points/assess", {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
+}
+
 /** Turn one estimated date into real, bookable itineraries. Costs one request. */
 export function resolveDate(body: ResolveDateRequest): Promise<TripOption[]> {
   return request<TripOption[]>("/api/resolve-date", {
@@ -261,6 +350,22 @@ export function formatMoney(value: string | number, currency: string): string {
     }).format(amount);
   } catch {
     return `${currency.toUpperCase()} ${Math.round(amount).toLocaleString()}`;
+  }
+}
+
+/** Per-point values live in fractions of a rupee, so whole-rupee rounding —
+ *  which is right for fares — turns every one of them into ₹0. */
+export function formatRate(value: string | number, currency: string): string {
+  const amount = typeof value === "string" ? Number(value) : value;
+  try {
+    return new Intl.NumberFormat("en-IN", {
+      style: "currency",
+      currency: currency.toUpperCase(),
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2,
+    }).format(amount);
+  } catch {
+    return `${currency.toUpperCase()} ${amount.toFixed(2)}`;
   }
 }
 

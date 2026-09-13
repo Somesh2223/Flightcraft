@@ -5,13 +5,18 @@ import { useState } from "react";
 import {
   BookingLink,
   Leg,
+  POINTS_VERDICT_STYLE,
+  PointsAssessment,
   PriceContext,
   Segment,
   TripOption,
   VERDICT_STYLE,
+  Wallet,
+  assessPoints,
   bookingLinks,
   formatDuration,
   formatMoney,
+  formatRate,
   relativeAge,
 } from "@/lib/api";
 
@@ -222,16 +227,158 @@ function BookingPanel({
   );
 }
 
+function PointsPanel({
+  option,
+  wallet,
+  currency,
+  bestCashAlternative,
+  bestCashDate,
+}: {
+  option: TripOption;
+  wallet: Wallet;
+  currency: string;
+  bestCashAlternative?: number | null;
+  bestCashDate?: string | null;
+}) {
+  // Deliberately not seeded from props. This component mounts on the first
+  // render — before any wallet exists, when points_options is still empty — and
+  // useState only runs its initialiser once, so a seeded value would stay ""
+  // forever and every click would return early. The select looked correct
+  // regardless, because a browser shows the first option when React's value
+  // matches none of them.
+  const [program, setProgram] = useState("");
+  const selected = program || option.points_options[0]?.program || "";
+  const [points, setPoints] = useState("");
+  const [taxes, setTaxes] = useState("");
+  const [result, setResult] = useState<PointsAssessment | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  if (option.points_options.length === 0) return null;
+
+  async function value() {
+    const pts = Number(points);
+    if (!selected || !Number.isFinite(pts) || pts <= 0) return;
+    setBusy(true);
+    setError(null);
+    try {
+      setResult(
+        await assessPoints({
+          wallet,
+          quote: {
+            program: selected,
+            points: Math.round(pts),
+            cash_component: Number(taxes) || 0,
+          },
+          cash_price: Number(option.total_price),
+          best_cash_alternative: bestCashAlternative ?? null,
+          best_cash_date: bestCashDate ?? null,
+        }),
+      );
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not value that award");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  const style = result ? POINTS_VERDICT_STYLE[result.verdict] : null;
+
+  return (
+    <div className="mt-3 rounded-md border border-border-subtle bg-surface-raised/50 p-3">
+      <div className="flex flex-wrap items-center gap-2 text-xs">
+        <span className="text-muted">Bookable with</span>
+        {option.points_options.map((e) => (
+          <span
+            key={e.program}
+            className="rounded-full border border-border-subtle px-2 py-0.5"
+            title={e.note}
+          >
+            {e.label} · {e.balance.toLocaleString()}
+          </span>
+        ))}
+      </div>
+
+      <div className="mt-2 flex flex-wrap items-end gap-2">
+        {option.points_options.length > 1 && (
+          <select
+            value={selected}
+            onChange={(e) => setProgram(e.target.value)}
+            className="input max-w-[180px] py-1 text-xs"
+          >
+            {option.points_options.map((e) => (
+              <option key={e.program} value={e.program}>
+                {e.label}
+              </option>
+            ))}
+          </select>
+        )}
+        <input
+          type="number"
+          min={0}
+          value={points}
+          onChange={(e) => setPoints(e.target.value)}
+          placeholder="Points quoted"
+          className="input w-32 py-1 text-xs"
+        />
+        <input
+          type="number"
+          min={0}
+          value={taxes}
+          onChange={(e) => setTaxes(e.target.value)}
+          placeholder="Taxes"
+          className="input w-24 py-1 text-xs"
+        />
+        <button
+          type="button"
+          onClick={value}
+          disabled={busy}
+          className="rounded-md border border-accent/50 px-3 py-1 text-xs text-accent transition hover:bg-accent/10 disabled:opacity-60"
+        >
+          {busy ? "Valuing…" : "Is it worth it?"}
+        </button>
+      </div>
+
+      {error && <p className="mt-2 text-[11px] text-amber-300">{error}</p>}
+
+      {result && style && (
+        <div className="mt-2 space-y-1">
+          <span
+            className={`inline-block rounded px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide ${style.className}`}
+          >
+            {style.label}
+          </span>
+          <p className="text-[11px] leading-relaxed text-muted">{result.note}</p>
+          {result.value_per_point_flexible !== null && (
+            <p className="text-[11px] text-muted/70">
+              {formatRate(result.value_per_point, currency)} per point against this
+              date ·{" "}
+              {formatRate(result.value_per_point_flexible, currency)} against the
+              cheapest date found
+            </p>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 export default function ResultsList({
   options,
   currency,
   onPriceDate,
   pricingDate,
+  wallet,
+  bestCashAlternative,
+  bestCashDate,
 }: {
   options: TripOption[];
   currency: string;
   onPriceDate?: (option: TripOption) => void;
   pricingDate?: string | null;
+  wallet?: Wallet;
+  bestCashAlternative?: number | null;
+  bestCashDate?: string | null;
 }) {
   if (options.length === 0) {
     return (
@@ -288,6 +435,15 @@ export default function ResultsList({
                   {option.inbound && <LegRow leg={option.inbound} label="Back" />}
                   {option.price_context && (
                     <PriceSignal context={option.price_context} />
+                  )}
+                  {wallet && (
+                    <PointsPanel
+                      option={option}
+                      wallet={wallet}
+                      currency={currency}
+                      bestCashAlternative={bestCashAlternative}
+                      bestCashDate={bestCashDate}
+                    />
                   )}
                 </div>
 

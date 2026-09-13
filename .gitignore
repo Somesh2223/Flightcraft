@@ -3,7 +3,10 @@ __pycache__/
 *.pyc
 .venv/
 venv/
-data/
+# Runtime cache only — the SQLite price history and the downloaded airport
+# dataset. Anchored to the repo root, because a bare `data/` also swallows
+# api/data/, where the carrier and loyalty reference files live.
+/data/
 *.egg-info/
 .pytest_cache/
 .ruff_cache/

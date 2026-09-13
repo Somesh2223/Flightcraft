@@ -17,6 +17,7 @@ from api.domain import (
 )
 from api.reference import aircraft
 from api.engines.history import PriceContext
+from api.engines.points import AwardQuote, Eligibility, Wallet, eligible_programs
 from api.pipeline.filters import FilterSet
 from api.pipeline.scan import ScanDepth
 from api.providers.travelpayouts import booking_link
@@ -47,6 +48,9 @@ class SearchRequest(BaseModel):
     passengers: int = Field(default=1, ge=1, le=9)
     trip_class: TripClass = TripClass.ECONOMY
     limit: int = Field(default=40, ge=1, le=200)
+    # Optional. When present, each result says which of these programmes could
+    # book it — free to compute, since it needs no provider call.
+    wallet: Wallet | None = None
 
     def to_filters(self) -> FilterSet:
         return FilterSet(
@@ -80,6 +84,21 @@ class ResolveDateRequest(BaseModel):
     passengers: int = Field(default=1, ge=1, le=9)
 
 
+class PointsAssessRequest(BaseModel):
+    """Value an award the traveller is looking at against the cash scan.
+
+    `best_cash_alternative` is what makes this worth doing: comparing an award
+    only against the same date's fare is how people talk themselves into poor
+    redemptions.
+    """
+
+    wallet: Wallet
+    quote: AwardQuote
+    cash_price: Decimal
+    best_cash_alternative: Decimal | None = None
+    best_cash_date: str | None = None
+
+
 class BookingLinksRequest(BaseModel):
     """Where to actually buy a specific live-quoted itinerary.
 
@@ -89,6 +108,21 @@ class BookingLinksRequest(BaseModel):
     """
 
     provider_ref: str
+
+
+def carriers_on(option: TripOption) -> list[str]:
+    """Every marketing carrier the traveller would actually fly.
+
+    Segment codes are used where a live quote provides them, since a one-stop
+    itinerary can change airline midway and an award has to cover both.
+    """
+    codes: list[str] = []
+    for leg in option.legs:
+        if leg.segments:
+            codes.extend(s.marketing_carrier for s in leg.segments)
+        elif leg.airline:
+            codes.append(leg.airline)
+    return codes
 
 
 class SegmentOut(BaseModel):
@@ -184,6 +218,10 @@ class TripOptionOut(BaseModel):
     is_live_quote: bool = False
     provider_ref: str | None = None
     duration_minutes: int | None = None
+    # Programmes from the caller's wallet that could book this itinerary.
+    # Eligibility only — whether an award seat exists is a different question,
+    # and no free data source answers it.
+    points_options: list[Eligibility] = Field(default_factory=list)
 
     @classmethod
     def of(
@@ -191,6 +229,7 @@ class TripOptionOut(BaseModel):
         option: TripOption,
         passengers: int = 1,
         price_context: PriceContext | None = None,
+        wallet: Wallet | None = None,
     ) -> TripOptionOut:
         # A round trip priced as one fare carries both directions on a single
         # row, so its return segments belong to the inbound leg rather than the
@@ -226,6 +265,9 @@ class TripOptionOut(BaseModel):
             is_live_quote=option.is_live_quote,
             provider_ref=option.provider_ref,
             duration_minutes=option.duration_minutes,
+            points_options=(
+                eligible_programs(wallet, carriers_on(option)) if wallet else []
+            ),
         )
 
 

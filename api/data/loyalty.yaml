@@ -1,0 +1,147 @@
+# Loyalty programme reference data.
+#
+# WHAT IS DELIBERATELY NOT HERE: award prices and bank transfer ratios.
+#
+# Both change often, neither is published in a machine-readable form, and the
+# only sources are content sites that contradict each other. A transfer is
+# irreversible — someone acting on a wrong ratio loses the points permanently —
+# so this file carries none of those numbers. The points engine asks the
+# traveller for the award quote they are actually looking at instead, and does
+# the arithmetic on a figure that is correct by construction.
+#
+# What IS here is structural and slow-moving: which programme belongs to which
+# airline, which alliance it can book across, and which programmes share a
+# currency. That is enough to answer "could my points touch this flight", which
+# is the question a cash-fare search is uniquely placed to help with.
+#
+# `books_alliance` means the programme can issue awards on that alliance's
+# members. `currency_pool` means balances move freely between those programmes
+# at 1:1, so they can be treated as one pot.
+
+programs:
+  maharaja_club:
+    name: Maharaja Club
+    airline: AI
+    books_alliance: star_alliance
+
+  six_e_rewards:
+    name: 6E Rewards
+    airline: 6E
+    # IndiGo's scheme pays out as a discount on a future fare rather than an
+    # award seat, so it never competes on an award chart. Treated as cash-off.
+    redeems_as: fare_discount
+
+  krisflyer:
+    name: KrisFlyer
+    airline: SQ
+    books_alliance: star_alliance
+
+  miles_and_more:
+    name: Miles & More
+    airline: LH
+    books_alliance: star_alliance
+
+  miles_and_smiles:
+    name: Miles&Smiles
+    airline: TK
+    books_alliance: star_alliance
+
+  mileage_plus:
+    name: MileagePlus
+    airline: UA
+    books_alliance: star_alliance
+
+  ana_mileage_club:
+    name: ANA Mileage Club
+    airline: NH
+    books_alliance: star_alliance
+
+  royal_orchid_plus:
+    name: Royal Orchid Plus
+    airline: TG
+    books_alliance: star_alliance
+
+  privilege_club:
+    name: Privilege Club
+    airline: QR
+    books_alliance: oneworld
+    currency_pool: avios
+
+  ba_club:
+    name: The British Airways Club
+    airline: BA
+    books_alliance: oneworld
+    currency_pool: avios
+
+  iberia_plus:
+    name: Iberia Plus
+    airline: IB
+    books_alliance: oneworld
+    currency_pool: avios
+
+  finnair_plus:
+    name: Finnair Plus
+    airline: AY
+    books_alliance: oneworld
+    currency_pool: avios
+
+  asia_miles:
+    name: Asia Miles
+    airline: CX
+    books_alliance: oneworld
+
+  jal_mileage_bank:
+    name: JAL Mileage Bank
+    airline: JL
+    books_alliance: oneworld
+
+  enrich:
+    name: Enrich
+    airline: MH
+    books_alliance: oneworld
+
+  flysmiles:
+    name: FlySmiLes
+    airline: UL
+    books_alliance: oneworld
+
+  sindbad:
+    name: Sindbad
+    airline: WY
+    books_alliance: oneworld
+
+  flying_blue:
+    name: Flying Blue
+    airline: AF
+    books_alliance: skyteam
+
+  skymiles:
+    name: SkyMiles
+    airline: DL
+    books_alliance: skyteam
+
+  lotusmiles:
+    name: Lotusmiles
+    airline: VN
+    books_alliance: skyteam
+
+  alfursan:
+    name: Alfursan
+    airline: SV
+    books_alliance: skyteam
+
+  # --- Programmes outside the three alliances ---
+  # These book their own metal and a hand-picked partner list rather than a
+  # whole alliance, so eligibility is limited to the airline itself unless the
+  # traveller tells us otherwise.
+  skywards:
+    name: Skywards
+    airline: EK
+
+  etihad_guest:
+    name: Etihad Guest
+    airline: EY
+
+  falconflyer:
+    name: Falconflyer
+    airline: GF

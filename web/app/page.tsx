@@ -1,8 +1,9 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 
 import MonthGrid from "@/components/MonthGrid";
+import PointsWallet, { loadWallet } from "@/components/PointsWallet";
 import ResultsList from "@/components/ResultsList";
 import {
   BODY_LABEL,
@@ -13,6 +14,7 @@ import {
   SearchRequest,
   SearchResponse,
   TripOption,
+  Wallet,
   formatMoney,
   resolveDate,
   search,
@@ -84,6 +86,11 @@ export default function Home() {
   const [error, setError] = useState<string | null>(null);
   const [selectedDate, setSelectedDate] = useState<string | null>(null);
   const [pricingCell, setPricingCell] = useState<string | null>(null);
+  // Read after mount, not during render: localStorage does not exist on the
+  // server and reading it in the initial state would break hydration.
+  const [wallet, setWallet] = useState<Wallet>({ holdings: [] });
+
+  useEffect(() => setWallet(loadWallet()), []);
 
   function toggleClass(value: CarrierClass) {
     setClasses((current) =>
@@ -178,6 +185,7 @@ export default function Home() {
       retiring_only: retiringOnly,
       depth: activeDepth,
       limit: 40,
+      wallet: wallet.holdings.length ? wallet : null,
     };
 
     try {
@@ -191,6 +199,16 @@ export default function Home() {
       setLoading(false);
     }
   }
+
+  /** The cheapest fare anywhere in the scanned window — the real alternative to
+   *  spending points, for anyone whose dates are flexible. */
+  const cheapestCash = useMemo(() => {
+    if (!data || data.calendar.length === 0) return null;
+    const best = data.calendar.reduce((a, b) =>
+      Number(a.price) <= Number(b.price) ? a : b,
+    );
+    return { price: Number(best.price), date: best.depart_date };
+  }, [data]);
 
   const visible = useMemo(() => {
     if (!data) return [];
@@ -228,6 +246,8 @@ export default function Home() {
           </span>
         </div>
       )}
+
+      <PointsWallet wallet={wallet} onChange={setWallet} />
 
       <section className="mb-6 rounded-xl border border-border-subtle bg-surface p-5">
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
@@ -522,6 +542,9 @@ export default function Home() {
                 currency={data.currency}
                 onPriceDate={priceDate}
                 pricingDate={pricingCell}
+                wallet={wallet.holdings.length ? wallet : undefined}
+                bestCashAlternative={cheapestCash?.price}
+                bestCashDate={cheapestCash?.date}
               />
             </div>
           </div>

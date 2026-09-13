@@ -14,7 +14,7 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
 from api import config
 from api.domain import DateRange, FareRow, SearchSpec, TripOption
-from api.engines import datespace, history
+from api.engines import datespace, history, points
 from api.jobs import popular
 from api.pipeline import filters, resolve
 from api.pipeline.filters import FilterSet
@@ -22,10 +22,11 @@ from api.pipeline.scan import ScanDepth, estimate_calls, scan
 from api.providers.demo import DemoClient
 from api.providers.ignav import IgnavClient, IgnavError
 from api.providers.travelpayouts import TravelpayoutsClient, TravelpayoutsError
-from api.reference import carriers
+from api.reference import carriers, loyalty
 from api.schemas import (
     BookingLinksRequest,
     CalendarCell,
+    PointsAssessRequest,
     ResolveDateRequest,
     SearchRequest,
     SearchResponse,
@@ -228,7 +229,8 @@ async def search(request: SearchRequest) -> SearchResponse:
         contexts = await _price_contexts(store, spec, shown)
 
     results = [
-        TripOptionOut.of(o, spec.passengers, contexts.get(id(o))) for o in shown
+        TripOptionOut.of(o, spec.passengers, contexts.get(id(o)), request.wallet)
+        for o in shown
     ]
 
     return SearchResponse(
@@ -254,6 +256,41 @@ async def search(request: SearchRequest) -> SearchResponse:
         split_ticket_saving=saving,
         observations_recorded=recorded,
         warnings=result.warnings,
+    )
+
+
+@app.get("/api/loyalty/programs")
+async def list_programs() -> dict:
+    return {
+        "programs": [
+            {
+                "code": p.code,
+                "name": p.name,
+                "label": p.label,
+                "airline": p.airline,
+                "books_alliance": p.books_alliance,
+                "currency_pool": p.currency_pool,
+                "books_award_seats": p.books_award_seats,
+            }
+            for p in loyalty.all_programs()
+        ]
+    }
+
+
+@app.post("/api/points/assess", response_model=points.Assessment)
+async def assess_points(request: PointsAssessRequest) -> points.Assessment:
+    """Value a redemption the traveller is looking at, in the context of the scan.
+
+    The award price comes from the traveller because no free source publishes
+    one, and a guessed number here would send someone to spend points they
+    cannot get back.
+    """
+    return points.assess(
+        request.quote,
+        request.wallet,
+        cash_price=request.cash_price,
+        best_cash_alternative=request.best_cash_alternative,
+        best_cash_date=request.best_cash_date,
     )
 
 
