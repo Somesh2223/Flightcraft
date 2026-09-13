@@ -1,10 +1,16 @@
 "use client";
 
+import { useState } from "react";
+
 import {
+  BookingLink,
   Leg,
   PriceContext,
+  Segment,
   TripOption,
   VERDICT_STYLE,
+  bookingLinks,
+  formatDuration,
   formatMoney,
   relativeAge,
 } from "@/lib/api";
@@ -30,26 +36,76 @@ function shortDate(iso: string): string {
   });
 }
 
-function LegRow({ leg, label }: { leg: Leg; label: string }) {
+function clockTime(iso: string | null): string | null {
+  if (!iso) return null;
+  return new Date(iso).toLocaleTimeString("en-GB", {
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+}
+
+function SegmentRow({ segment }: { segment: Segment }) {
+  const depart = clockTime(segment.departure_local);
+  const arrive = clockTime(segment.arrival_local);
+
   return (
-    <div className="flex items-baseline gap-2 text-sm">
-      <span className="w-14 shrink-0 text-xs uppercase tracking-wide text-muted">
-        {label}
+    <div className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5 text-xs text-muted">
+      <span className="font-mono text-foreground">{segment.flight_number}</span>
+      <span>
+        {segment.origin}→{segment.destination}
       </span>
-      <span className="font-medium">{shortDate(leg.depart_date)}</span>
-      <span className="text-muted">
-        {leg.origin}→{leg.destination}
-      </span>
-      <span className="text-muted">
-        {leg.stops === 0 ? "nonstop" : `${leg.stops} stop${leg.stops === 1 ? "" : "s"}`}
-      </span>
-      {leg.airline_name && (
-        <span className="truncate">
-          {leg.airline_name}
-          {CLASS_LABEL[leg.carrier_class] && (
-            <span className="text-muted"> · {CLASS_LABEL[leg.carrier_class]}</span>
-          )}
+      {depart && arrive && (
+        <span>
+          {depart}–{arrive}
         </span>
+      )}
+      {segment.aircraft && (
+        <span
+          className="rounded bg-surface-raised px-1.5 py-0.5 text-[10px]"
+          title={`${segment.aircraft_family ?? "Unclassified"} · ${segment.aircraft_body}`}
+        >
+          {segment.aircraft}
+        </span>
+      )}
+      {segment.carrier_name && <span className="truncate">{segment.carrier_name}</span>}
+    </div>
+  );
+}
+
+function LegRow({ leg, label }: { leg: Leg; label: string }) {
+  const duration = formatDuration(leg.duration_minutes);
+
+  return (
+    <div className="space-y-1">
+      <div className="flex flex-wrap items-baseline gap-2 text-sm">
+        <span className="w-12 shrink-0 text-xs uppercase tracking-wide text-muted">
+          {label}
+        </span>
+        <span className="font-medium">{shortDate(leg.depart_date)}</span>
+        <span className="text-muted">
+          {leg.origin}→{leg.destination}
+        </span>
+        <span className="text-muted">
+          {leg.stops === 0
+            ? "nonstop"
+            : `${leg.stops} stop${leg.stops === 1 ? "" : "s"}`}
+        </span>
+        {duration && <span className="text-muted">{duration}</span>}
+        {leg.segments.length === 0 && leg.airline_name && (
+          <span className="truncate">
+            {leg.airline_name}
+            {CLASS_LABEL[leg.carrier_class] && (
+              <span className="text-muted"> · {CLASS_LABEL[leg.carrier_class]}</span>
+            )}
+          </span>
+        )}
+      </div>
+      {leg.segments.length > 0 && (
+        <div className="ml-12 space-y-0.5 border-l border-border-subtle pl-3">
+          {leg.segments.map((segment, i) => (
+            <SegmentRow key={`${segment.flight_number}-${i}`} segment={segment} />
+          ))}
+        </div>
       )}
     </div>
   );
@@ -81,12 +137,101 @@ function PriceSignal({ context }: { context: PriceContext }) {
   );
 }
 
+function BookingPanel({
+  option,
+  currency,
+}: {
+  option: TripOption;
+  currency: string;
+}) {
+  const [links, setLinks] = useState<BookingLink[] | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  async function load() {
+    if (!option.provider_ref) return;
+    setLoading(true);
+    setError(null);
+    try {
+      const response = await bookingLinks(option.provider_ref);
+      setLinks(response.links);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not load sellers");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  if (links === null) {
+    return (
+      <div className="mt-2 text-right">
+        <button
+          type="button"
+          onClick={load}
+          disabled={loading}
+          className="rounded-md bg-accent px-3 py-1.5 text-xs font-medium text-black transition hover:brightness-110 disabled:opacity-60"
+        >
+          {loading ? "Checking sellers…" : "Where to book"}
+        </button>
+        {error && <p className="mt-1 text-[11px] text-amber-300">{error}</p>}
+      </div>
+    );
+  }
+
+  if (links.length === 0) {
+    return (
+      <p className="mt-2 text-right text-[11px] text-muted">
+        No seller is listing this fare right now.
+      </p>
+    );
+  }
+
+  const searchPrice = Number(option.total_price);
+
+  return (
+    <div className="mt-2 space-y-1">
+      {links.map((link) => {
+        const price = link.price === null ? null : Number(link.price);
+        // The checkout price and the search price genuinely differ, so the gap
+        // is shown rather than hidden behind the more flattering number.
+        const delta = price === null ? null : price - searchPrice;
+        return (
+          <a
+            key={link.url}
+            href={link.url}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="flex items-baseline justify-end gap-2 text-xs transition hover:text-accent"
+          >
+            <span className="truncate text-muted">{link.provider_name}</span>
+            {price !== null && (
+              <span className="font-medium">{formatMoney(price, currency)}</span>
+            )}
+            {delta !== null && Math.abs(delta) >= 1 && (
+              <span
+                className={delta > 0 ? "text-amber-300" : "text-emerald-300"}
+              >
+                {delta > 0 ? "+" : ""}
+                {Math.round(delta).toLocaleString()}
+              </span>
+            )}
+          </a>
+        );
+      })}
+    </div>
+  );
+}
+
 export default function ResultsList({
   options,
   currency,
+  onPriceDate,
+  pricingDate,
 }: {
   options: TripOption[];
   currency: string;
+  onPriceDate?: (option: TripOption) => void;
+  pricingDate?: string | null;
 }) {
   if (options.length === 0) {
     return (
@@ -97,55 +242,97 @@ export default function ResultsList({
     );
   }
 
+  const firstEstimate = options.findIndex((o) => !o.is_live_quote);
+
   return (
     <ul className="space-y-2">
-      {options.map((option, index) => (
-        <li
-          key={`${option.depart_date}-${option.return_date ?? "ow"}-${index}`}
-          className="rounded-lg border border-border-subtle bg-surface p-4 transition hover:border-accent/50"
-        >
-          <div className="flex flex-wrap items-start justify-between gap-4">
-            <div className="min-w-0 flex-1 space-y-1">
-              <div className="flex items-center gap-2">
-                <span className="rounded bg-surface-raised px-2 py-0.5 text-[10px] uppercase tracking-wide text-muted">
-                  {KIND_LABEL[option.kind]}
-                </span>
-                {option.nights !== null && (
-                  <span className="text-xs text-muted">{option.nights} nights</span>
-                )}
-                {index === 0 && (
-                  <span className="rounded bg-emerald-500/15 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-emerald-300">
-                    Cheapest
-                  </span>
-                )}
-              </div>
+      {options.map((option, index) => {
+        const cellKey = `${option.depart_date}-${option.return_date ?? "ow"}`;
+        return (
+          <li key={`${cellKey}-${index}`}>
+            {index === firstEstimate && firstEstimate > 0 && (
+              <p className="mb-2 mt-4 text-xs text-muted">
+                Below: dates that looked cheap in the scan but have not been priced
+                for real yet. They may not still be available.
+              </p>
+            )}
+            <div className="rounded-lg border border-border-subtle bg-surface p-4 transition hover:border-accent/50">
+              <div className="flex flex-wrap items-start justify-between gap-4">
+                <div className="min-w-0 flex-1 space-y-1">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="rounded bg-surface-raised px-2 py-0.5 text-[10px] uppercase tracking-wide text-muted">
+                      {KIND_LABEL[option.kind]}
+                    </span>
+                    {option.is_live_quote ? (
+                      <span className="rounded bg-emerald-500/15 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-emerald-300">
+                        Verified fare
+                      </span>
+                    ) : (
+                      <span className="rounded bg-white/5 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-muted">
+                        Estimate
+                      </span>
+                    )}
+                    {option.nights !== null && (
+                      <span className="text-xs text-muted">
+                        {option.nights} nights
+                      </span>
+                    )}
+                    {index === 0 && option.is_live_quote && (
+                      <span className="rounded bg-accent/20 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-accent">
+                        Cheapest bookable
+                      </span>
+                    )}
+                  </div>
 
-              <LegRow leg={option.outbound} label="Out" />
-              {option.inbound && <LegRow leg={option.inbound} label="Back" />}
-              {option.price_context && (
-                <PriceSignal context={option.price_context} />
-              )}
-            </div>
+                  <LegRow leg={option.outbound} label="Out" />
+                  {option.inbound && <LegRow leg={option.inbound} label="Back" />}
+                  {option.price_context && (
+                    <PriceSignal context={option.price_context} />
+                  )}
+                </div>
 
-            <div className="text-right">
-              <div className="text-lg font-semibold">
-                {formatMoney(option.total_price, currency)}
+                <div className="text-right">
+                  <div className="text-lg font-semibold">
+                    {formatMoney(option.total_price, currency)}
+                  </div>
+                  <div className="text-[11px] text-muted">
+                    {option.is_live_quote
+                      ? "live quote"
+                      : `seen ${relativeAge(option.observed_at)}`}
+                  </div>
+
+                  {option.is_live_quote && option.provider_ref ? (
+                    <BookingPanel option={option} currency={currency} />
+                  ) : (
+                    <div className="mt-2 space-y-1">
+                      {onPriceDate && (
+                        <button
+                          type="button"
+                          onClick={() => onPriceDate(option)}
+                          disabled={pricingDate === cellKey}
+                          className="rounded-md border border-accent/50 px-3 py-1.5 text-xs font-medium text-accent transition hover:bg-accent/10 disabled:opacity-60"
+                        >
+                          {pricingDate === cellKey ? "Pricing…" : "Price this date"}
+                        </button>
+                      )}
+                      <div>
+                        <a
+                          href={option.booking_link}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="text-[11px] text-muted underline underline-offset-2 hover:text-accent"
+                        >
+                          Search manually
+                        </a>
+                      </div>
+                    </div>
+                  )}
+                </div>
               </div>
-              <div className="text-[11px] text-muted">
-                seen {relativeAge(option.observed_at)}
-              </div>
-              <a
-                href={option.booking_link}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="mt-2 inline-block rounded-md bg-accent px-3 py-1.5 text-xs font-medium text-black transition hover:brightness-110"
-              >
-                Check live price
-              </a>
             </div>
-          </div>
-        </li>
-      ))}
+          </li>
+        );
+      })}
     </ul>
   );
 }

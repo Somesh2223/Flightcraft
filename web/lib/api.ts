@@ -1,6 +1,27 @@
 export type CarrierClass = "low_cost" | "full_service" | "hybrid" | "unknown";
 export type ScanDepth = "quick" | "standard" | "deep";
 
+export type BodyType =
+  | "widebody"
+  | "narrowbody"
+  | "regional"
+  | "turboprop"
+  | "unknown";
+
+export interface Segment {
+  carrier: string;
+  carrier_name: string | null;
+  flight_number: string;
+  origin: string;
+  destination: string;
+  departure_local: string | null;
+  arrival_local: string | null;
+  duration_minutes: number | null;
+  aircraft: string | null;
+  aircraft_family: string | null;
+  aircraft_body: BodyType;
+}
+
 export interface Leg {
   origin: string;
   destination: string;
@@ -13,7 +34,17 @@ export interface Leg {
   alliance: string | null;
   flight_number: string | null;
   departure_at: string | null;
+  duration_minutes: number | null;
   observed_at: string;
+  segments: Segment[];
+}
+
+export interface BookingLink {
+  provider_name: string;
+  provider_type: string | null;
+  price: string | null;
+  currency: string | null;
+  url: string;
 }
 
 export type Verdict = "exceptional" | "good" | "typical" | "high" | "unknown";
@@ -43,6 +74,11 @@ export interface TripOption {
   booking_link: string;
   observed_at: string;
   price_context: PriceContext | null;
+  // A live quote names its flights and can be priced to a checkout page.
+  // Anything else is a cached estimate: a lead, not an offer.
+  is_live_quote: boolean;
+  provider_ref: string | null;
+  duration_minutes: number | null;
 }
 
 export interface CalendarCell {
@@ -67,6 +103,8 @@ export interface SearchResponse {
   filtered_out: Record<string, number>;
   needs_deep_scan: boolean;
   demo_mode: boolean;
+  live_requests: number;
+  live_cache_hits: number;
   observations_recorded: number;
   warnings: string[];
 }
@@ -100,10 +138,24 @@ export interface SearchRequest {
   carrier_classes?: CarrierClass[] | null;
   alliances?: string[] | null;
   max_price?: number | null;
+  aircraft_families?: string[] | null;
+  body_types?: BodyType[] | null;
+  retiring_only?: boolean;
   depth?: ScanDepth;
   currency?: string;
   passengers?: number;
   limit?: number;
+}
+
+export interface ResolveDateRequest {
+  origin: string;
+  destination: string;
+  depart_date: string;
+  return_date?: string | null;
+  max_stops?: number | null;
+  include_airlines?: string[] | null;
+  currency?: string;
+  passengers?: number;
 }
 
 export interface Carrier {
@@ -144,6 +196,22 @@ export function listCarriers(): Promise<{ carriers: Carrier[] }> {
   return request("/api/carriers");
 }
 
+/** Where to buy one itinerary, and what each seller actually charges. */
+export function bookingLinks(providerRef: string): Promise<{ links: BookingLink[] }> {
+  return request("/api/booking-links", {
+    method: "POST",
+    body: JSON.stringify({ provider_ref: providerRef }),
+  });
+}
+
+/** Turn one estimated date into real, bookable itineraries. Costs one request. */
+export function resolveDate(body: ResolveDateRequest): Promise<TripOption[]> {
+  return request<TripOption[]>("/api/resolve-date", {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
+}
+
 export const REJECTION_LABELS: Record<string, string> = {
   stops: "too many stops",
   price: "over budget",
@@ -153,7 +221,26 @@ export const REJECTION_LABELS: Record<string, string> = {
   carrier_class: "wrong carrier type",
   alliance: "outside alliance",
   unknown_airline: "airline not identified",
+  aircraft_body: "wrong aircraft type",
+  aircraft_family: "different aircraft",
+  aircraft_not_retiring: "not a retiring type",
+  unknown_aircraft: "aircraft not identified",
 };
+
+export const BODY_LABEL: Record<BodyType, string> = {
+  widebody: "Widebody",
+  narrowbody: "Narrowbody",
+  regional: "Regional jet",
+  turboprop: "Turboprop",
+  unknown: "Unknown",
+};
+
+export function formatDuration(minutes: number | null): string | null {
+  if (minutes === null || minutes <= 0) return null;
+  const hours = Math.floor(minutes / 60);
+  const rest = minutes % 60;
+  return rest === 0 ? `${hours}h` : `${hours}h ${rest}m`;
+}
 
 export function formatMoney(value: string | number, currency: string): string {
   const amount = typeof value === "string" ? Number(value) : value;

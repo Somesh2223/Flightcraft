@@ -5,13 +5,29 @@ import { useMemo, useState } from "react";
 import MonthGrid from "@/components/MonthGrid";
 import ResultsList from "@/components/ResultsList";
 import {
+  BODY_LABEL,
+  BodyType,
   CarrierClass,
   REJECTION_LABELS,
   ScanDepth,
   SearchRequest,
   SearchResponse,
+  TripOption,
+  resolveDate,
   search,
 } from "@/lib/api";
+
+function cellKey(option: TripOption): string {
+  return `${option.depart_date}-${option.return_date ?? "ow"}`;
+}
+
+/** Mirrors the server's ranking: a fare you can buy beats a cheaper guess. */
+function bookableFirst(options: TripOption[]): TripOption[] {
+  return [...options].sort((a, b) => {
+    if (a.is_live_quote !== b.is_live_quote) return a.is_live_quote ? -1 : 1;
+    return Number(a.total_price) - Number(b.total_price);
+  });
+}
 
 function iso(date: Date): string {
   // Local components, not toISOString — east of UTC that rolls midnight back a day.
@@ -33,10 +49,12 @@ const CARRIER_CLASSES: { value: CarrierClass; label: string }[] = [
   { value: "hybrid", label: "Hybrid" },
 ];
 
+const BODY_TYPES: BodyType[] = ["widebody", "narrowbody", "regional", "turboprop"];
+
 const DEPTHS: { value: ScanDepth; label: string; hint: string }[] = [
-  { value: "quick", label: "Quick", hint: "a year of fares in 1 call" },
-  { value: "standard", label: "Standard", hint: "adds fresher per-month data" },
-  { value: "deep", label: "Deep", hint: "tries to name airlines, often can't" },
+  { value: "quick", label: "Quick", hint: "estimates only, free" },
+  { value: "standard", label: "Standard", hint: "prices the 10 best dates for real" },
+  { value: "deep", label: "Deep", hint: "prices up to 30 dates for real" },
 ];
 
 export default function Home() {
@@ -56,12 +74,15 @@ export default function Home() {
   const [maxStops, setMaxStops] = useState("");
   const [classes, setClasses] = useState<CarrierClass[]>([]);
   const [airlines, setAirlines] = useState("");
+  const [bodies, setBodies] = useState<BodyType[]>([]);
+  const [retiringOnly, setRetiringOnly] = useState(false);
   const [depth, setDepth] = useState<ScanDepth>("standard");
 
   const [data, setData] = useState<SearchResponse | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [selectedDate, setSelectedDate] = useState<string | null>(null);
+  const [pricingCell, setPricingCell] = useState<string | null>(null);
 
   function toggleClass(value: CarrierClass) {
     setClasses((current) =>
@@ -69,6 +90,65 @@ export default function Home() {
         ? current.filter((c) => c !== value)
         : [...current, value],
     );
+  }
+
+  function toggleBody(value: BodyType) {
+    setBodies((current) =>
+      current.includes(value)
+        ? current.filter((b) => b !== value)
+        : [...current, value],
+    );
+  }
+
+  /** Buy a real price for one estimated date, and swap it into the list. */
+  async function priceDate(option: TripOption) {
+    if (!data) return;
+    const key = cellKey(option);
+    setPricingCell(key);
+    setError(null);
+    try {
+      const priced = await resolveDate({
+        origin: data.origin,
+        destination: data.destination,
+        depart_date: option.depart_date,
+        return_date: option.return_date,
+        max_stops: maxStops === "" ? null : Number(maxStops),
+      });
+      if (priced.length === 0) {
+        setError(`No flights are being sold for ${option.depart_date}.`);
+        return;
+      }
+      const real = priced[0];
+      setData((current) =>
+        current
+          ? {
+              ...current,
+              results: bookableFirst([
+                real,
+                ...current.results.filter((o) => cellKey(o) !== key),
+              ]),
+              // The grid has to move too. Leaving the old estimate on the
+              // calendar would keep advertising a price we just disproved.
+              calendar: current.calendar.map((cell) =>
+                cell.depart_date === real.depart_date
+                  ? {
+                      ...cell,
+                      price: real.total_price,
+                      stops: real.max_stops,
+                      airline: real.outbound.airline,
+                      airline_name: real.outbound.airline_name,
+                    }
+                  : cell,
+              ),
+              live_requests: current.live_requests + 1,
+            }
+          : current,
+      );
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not price that date");
+    } finally {
+      setPricingCell(null);
+    }
   }
 
   async function runSearch(overrideDepth?: ScanDepth) {
@@ -93,6 +173,8 @@ export default function Home() {
       max_stops: maxStops === "" ? null : Number(maxStops),
       include_airlines: codes.length ? codes : null,
       carrier_classes: classes.length ? classes : null,
+      body_types: bodies.length ? bodies : null,
+      retiring_only: retiringOnly,
       depth: activeDepth,
       limit: 40,
     };
@@ -290,6 +372,43 @@ export default function Home() {
           </Field>
         </div>
 
+        <div className="mt-5 grid gap-4 border-t border-border-subtle pt-5 sm:grid-cols-2">
+          <Field label="Aircraft">
+            <div className="flex flex-wrap gap-1.5 pt-1">
+              {BODY_TYPES.map((value) => (
+                <button
+                  key={value}
+                  type="button"
+                  onClick={() => toggleBody(value)}
+                  className={`rounded-full border px-3 py-1 text-xs transition ${
+                    bodies.includes(value)
+                      ? "border-accent bg-accent/15 text-accent"
+                      : "border-border-subtle text-muted hover:border-muted"
+                  }`}
+                >
+                  {BODY_LABEL[value]}
+                </button>
+              ))}
+              <button
+                type="button"
+                onClick={() => setRetiringOnly((v) => !v)}
+                title="A380, 747, A340, 767 — types most fleets are retiring"
+                className={`rounded-full border px-3 py-1 text-xs transition ${
+                  retiringOnly
+                    ? "border-accent bg-accent/15 text-accent"
+                    : "border-border-subtle text-muted hover:border-muted"
+                }`}
+              >
+                Fly it before it&apos;s gone
+              </button>
+            </div>
+          </Field>
+          <p className="self-end text-xs text-muted">
+            Aircraft filters need a real quote, so they only match dates that have
+            been priced. Unpriced dates are hidden while one is active.
+          </p>
+        </div>
+
         <button
           type="button"
           onClick={() => runSearch()}
@@ -315,7 +434,12 @@ export default function Home() {
             <span>
               {visible.length} of {data.total_before_filters} dated options
             </span>
-            <span>{data.provider_calls} provider calls</span>
+            <span>
+              {data.live_requests > 0
+                ? `${data.live_requests} date${data.live_requests === 1 ? "" : "s"} priced live`
+                : "no live pricing this search"}
+              {data.live_cache_hits > 0 && ` · ${data.live_cache_hits} reused`}
+            </span>
             {removed.length > 0 && (
               <span>
                 hidden:{" "}
@@ -338,15 +462,15 @@ export default function Home() {
           {data.needs_deep_scan && (
             <div className="mb-6 flex flex-wrap items-center gap-3 rounded-lg border border-accent/40 bg-accent/10 p-4 text-sm">
               <span>
-                Some fares were hidden because this scan depth does not identify
-                the airline.
+                Dates that have not been priced for real were hidden, because the
+                airline and aircraft are unknown until they are.
               </span>
               <button
                 type="button"
                 onClick={() => runSearch("deep")}
                 className="rounded-md bg-accent px-3 py-1.5 text-xs font-semibold text-black"
               >
-                Re-scan deeply
+                Price more dates
               </button>
             </div>
           )}
@@ -375,7 +499,12 @@ export default function Home() {
               <h2 className="mb-3 text-sm font-medium text-muted">
                 {selectedDate ? `Options on ${selectedDate}` : "Best options"}
               </h2>
-              <ResultsList options={visible} currency={data.currency} />
+              <ResultsList
+                options={visible}
+                currency={data.currency}
+                onPriceDate={priceDate}
+                pricingDate={pricingCell}
+              />
             </div>
           </div>
         </>

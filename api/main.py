@@ -228,8 +228,11 @@ async def search(request: SearchRequest) -> SearchResponse:
         calendar=calendar,
         total_before_filters=len(unfiltered),
         filtered_out=removed,
+        # Airline and aircraft filters can only judge a date that has been priced
+        # for real, so a deeper scan — which buys more dates — genuinely fixes it.
         needs_deep_scan=(
-            removed.get("unknown_airline", 0) > 0 and request.depth is not ScanDepth.DEEP
+            removed.get("unknown_airline", 0) + removed.get("unknown_aircraft", 0) > 0
+            and request.depth is not ScanDepth.DEEP
         ),
         demo_mode=config.DEMO_MODE,
         live_requests=live_requests,
