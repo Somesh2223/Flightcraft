@@ -1,20 +1,55 @@
 # Flightcraft
 
-A flight search engine built around scanning **date spaces** rather than dates.
+**Choose the flight. Then find the month.**
 
-Skyscanner and Google Flights assume you roughly know when you're travelling.
-They offer a cheapest-in-a-month calendar, but you cannot put constraints on it —
-ask for *"the cheapest day in November, no more than one stop, on a widebody,
-excluding budget carriers"* and you're back to searching one date at a time.
+Say what you want to fly — nonstop, a widebody, a particular airline — and
+Flightcraft scans whole months for the cheapest date that matches. Every other
+search engine makes you commit to dates first and offers the aircraft as an
+afterthought, if at all.
 
-Flightcraft inverts that. Scanning a range and then filtering it is the core
-primitive, so every feature is the same pipeline with a different filter:
+![Searching a whole month, with verified fares showing the actual flights and aircraft](docs/search.png)
+
+Skyscanner and Google Flights do offer a cheapest-in-a-month calendar, but you
+cannot put constraints on it. Ask for *"the cheapest day in October, one stop
+maximum, on a widebody, excluding budget carriers"* and you are back to
+searching one date at a time.
+
+Scanning a range and then filtering it is the core primitive here, so every
+feature is the same pipeline with a different filter:
 
 ```
 SearchSpec ──▶ FareScan ──▶ Enrich ──▶ Filter ──▶ Rank ──▶ Results
 ```
 
 A single-date search is just a range of length one.
+
+## Two months at once
+
+Outbound and return ranges are independent. Fly out any day in October, come
+back any day in November, bounded by trip length — and see the entire trade-off
+surface rather than one row of it.
+
+![Departure down the side, return across the top, coloured by price](docs/matrix.png)
+
+The shape is the point. That staircase is the 20-to-45-night constraint. The
+green column down 4 November and the red one down the 5th say that on this route
+the *return* date moves the price far more than the departure does — which is
+invisible in a list, and invisible in a calendar of departure dates.
+
+Booking the two legs as separate one-way tickets is frequently cheaper than any
+single return fare. On a 62-night DEL–DXB trip it saved ₹6,954, and the app
+says so outright.
+
+## Filtering by aircraft
+
+Aircraft type is a first-class filter: widebody, family, or *"fly it before it's
+gone"* for the types most fleets are retiring.
+
+![Widebody-only results, showing Air India 777s and 787s](docs/aircraft.png)
+
+Dates that have not been priced for real are hidden rather than guessed at,
+because the aircraft is genuinely unknown until a live quote names it — and the
+count of what was hidden is reported rather than silently dropped.
 
 ## What works today
 
@@ -125,6 +160,14 @@ Then open http://localhost:3000.
 
 ```bash
 .venv/Scripts/python.exe -m pytest
+```
+
+The README screenshots are regenerated with `scripts/screenshots.py`, which
+needs a browser the test suite does not:
+
+```bash
+pip install playwright && playwright install chromium
+python scripts/screenshots.py
 ```
 
 ## Layout
