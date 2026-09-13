@@ -80,6 +80,31 @@ export interface TripOption {
   provider_ref: string | null;
   duration_minutes: number | null;
   points_options: Eligibility[];
+  applied_offer: OfferApplication | null;
+}
+
+export interface Offer {
+  id: string;
+  label: string;
+  sellers: string[];
+  percent: number | null;
+  max_discount: number | null;
+  flat_discount: number | null;
+  min_spend: number | null;
+  valid_until: string | null;
+  promo_code: string | null;
+  note?: string | null;
+}
+
+export interface OfferApplication {
+  offer_id: string;
+  label: string;
+  discount: string;
+  effective_price: string;
+  promo_code: string | null;
+  days_left: number | null;
+  expiring_soon: boolean;
+  note: string;
 }
 
 export interface LoyaltyProgram {
@@ -166,6 +191,8 @@ export interface CalendarCell {
   airline: string | null;
   airline_name: string | null;
   return_date: string | null;
+  effective_price: string | null;
+  offer_label: string | null;
 }
 
 export interface SearchResponse {
@@ -225,6 +252,7 @@ export interface SearchRequest {
   passengers?: number;
   limit?: number;
   wallet?: Wallet | null;
+  offers?: Offer[];
 }
 
 export interface ResolveDateRequest {

@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 
 import MonthGrid from "@/components/MonthGrid";
+import OffersPanel, { loadOffers } from "@/components/OffersPanel";
 import PointsWallet, { loadWallet } from "@/components/PointsWallet";
 import ResultsList from "@/components/ResultsList";
 import {
@@ -13,6 +14,7 @@ import {
   ScanDepth,
   SearchRequest,
   SearchResponse,
+  Offer,
   TripOption,
   Wallet,
   formatMoney,
@@ -89,8 +91,12 @@ export default function Home() {
   // Read after mount, not during render: localStorage does not exist on the
   // server and reading it in the initial state would break hydration.
   const [wallet, setWallet] = useState<Wallet>({ holdings: [] });
+  const [offers, setOffers] = useState<Offer[]>([]);
 
-  useEffect(() => setWallet(loadWallet()), []);
+  useEffect(() => {
+    setWallet(loadWallet());
+    setOffers(loadOffers());
+  }, []);
 
   function toggleClass(value: CarrierClass) {
     setClasses((current) =>
@@ -186,6 +192,7 @@ export default function Home() {
       depth: activeDepth,
       limit: 40,
       wallet: wallet.holdings.length ? wallet : null,
+      offers,
     };
 
     try {
@@ -204,10 +211,12 @@ export default function Home() {
    *  spending points, for anyone whose dates are flexible. */
   const cheapestCash = useMemo(() => {
     if (!data || data.calendar.length === 0) return null;
-    const best = data.calendar.reduce((a, b) =>
-      Number(a.price) <= Number(b.price) ? a : b,
-    );
-    return { price: Number(best.price), date: best.depart_date };
+    // After any card offer, since that is what paying cash would actually cost —
+    // and so what the points are really being weighed against.
+    const payable = (c: (typeof data.calendar)[number]) =>
+      Number(c.effective_price ?? c.price);
+    const best = data.calendar.reduce((a, b) => (payable(a) <= payable(b) ? a : b));
+    return { price: payable(best), date: best.depart_date };
   }, [data]);
 
   const visible = useMemo(() => {
@@ -248,6 +257,7 @@ export default function Home() {
       )}
 
       <PointsWallet wallet={wallet} onChange={setWallet} />
+      <OffersPanel offers={offers} onChange={setOffers} currency="inr" />
 
       <section className="mb-6 rounded-xl border border-border-subtle bg-surface p-5">
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">

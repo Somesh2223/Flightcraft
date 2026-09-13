@@ -28,6 +28,13 @@ function heatColor(t: number): string {
   return `hsl(${hue} 62% 42%)`;
 }
 
+/** What the day actually costs: the headline fare, less any card offer. The
+ *  grid has to colour by this, or a discounted day looks pricier than it is and
+ *  the heatmap points at the wrong date. */
+function payable(cell: CalendarCell): number {
+  return Number(cell.effective_price ?? cell.price);
+}
+
 interface Props {
   cells: CalendarCell[];
   currency: string;
@@ -38,7 +45,7 @@ interface Props {
 export default function MonthGrid({ cells, currency, selected, onSelect }: Props) {
   if (cells.length === 0) return null;
 
-  const prices = cells.map((c) => Number(c.price));
+  const prices = cells.map(payable);
   const min = Math.min(...prices);
   const max = Math.max(...prices);
   const span = max - min || 1;
@@ -102,7 +109,8 @@ export default function MonthGrid({ cells, currency, selected, onSelect }: Props
                   );
                 }
 
-                const price = Number(cell.price);
+                const price = payable(cell);
+                const discounted = cell.effective_price != null && price < Number(cell.price);
                 const t = (price - min) / span;
 
                 return (
@@ -118,9 +126,20 @@ export default function MonthGrid({ cells, currency, selected, onSelect }: Props
                     }`}
                     title={`${cell.stops} stop${cell.stops === 1 ? "" : "s"}${
                       cell.airline_name ? ` · ${cell.airline_name}` : ""
+                    }${
+                      discounted
+                        ? ` · ${formatMoney(cell.price, currency)} before ${cell.offer_label}`
+                        : ""
                     }`}
                   >
-                    <div className="text-[10px] text-white/70">{day}</div>
+                    <div className="flex items-baseline justify-between">
+                      <span className="text-[10px] text-white/70">{day}</span>
+                      {discounted && (
+                        <span className="text-[9px] font-medium text-white/90">
+                          offer
+                        </span>
+                      )}
+                    </div>
                     <div className="text-xs font-semibold text-white">
                       {formatMoney(price, currency)}
                     </div>

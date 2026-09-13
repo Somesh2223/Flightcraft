@@ -17,6 +17,7 @@ from api.domain import (
 )
 from api.reference import aircraft
 from api.engines.history import PriceContext
+from api.engines.offers import Application, Offer
 from api.engines.points import AwardQuote, Eligibility, Wallet, eligible_programs
 from api.pipeline.filters import FilterSet
 from api.pipeline.scan import ScanDepth
@@ -51,6 +52,9 @@ class SearchRequest(BaseModel):
     # Optional. When present, each result says which of these programmes could
     # book it — free to compute, since it needs no provider call.
     wallet: Wallet | None = None
+    # Card and bank offers the traveller holds. Results are ranked on the price
+    # after these apply, because a discount can change which date is cheapest.
+    offers: list[Offer] = Field(default_factory=list)
 
     def to_filters(self) -> FilterSet:
         return FilterSet(
@@ -222,6 +226,16 @@ class TripOptionOut(BaseModel):
     # Eligibility only — whether an award seat exists is a different question,
     # and no free data source answers it.
     points_options: list[Eligibility] = Field(default_factory=list)
+    # The best card offer that applies, and what the fare costs once it does.
+    applied_offer: Application | None = None
+
+    @property
+    def effective_price(self) -> Decimal:
+        return (
+            self.applied_offer.effective_price
+            if self.applied_offer
+            else self.total_price
+        )
 
     @classmethod
     def of(
@@ -230,6 +244,7 @@ class TripOptionOut(BaseModel):
         passengers: int = 1,
         price_context: PriceContext | None = None,
         wallet: Wallet | None = None,
+        applied_offer: Application | None = None,
     ) -> TripOptionOut:
         # A round trip priced as one fare carries both directions on a single
         # row, so its return segments belong to the inbound leg rather than the
@@ -268,6 +283,7 @@ class TripOptionOut(BaseModel):
             points_options=(
                 eligible_programs(wallet, carriers_on(option)) if wallet else []
             ),
+            applied_offer=applied_offer,
         )
 
 
@@ -294,6 +310,10 @@ class CalendarCell(BaseModel):
     airline: str | None
     airline_name: str | None
     return_date: date | None
+    # What the day costs once a card offer applies. The grid colours by this,
+    # since it is the number the traveller actually pays.
+    effective_price: Decimal | None = None
+    offer_label: str | None = None
 
 
 class SearchResponse(BaseModel):

@@ -14,7 +14,7 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
 from api import config
 from api.domain import DateRange, FareRow, SearchSpec, TripOption
-from api.engines import datespace, history, points
+from api.engines import datespace, history, offers, points
 from api.jobs import popular
 from api.pipeline import filters, resolve
 from api.pipeline.filters import FilterSet
@@ -198,8 +198,24 @@ async def search(request: SearchRequest) -> SearchResponse:
     # split beats it, leaving nothing to compare against.
     saving = _split_ticket_saving(outcome.kept)
 
+    # Offers are applied before ranking, not after. Twelve percent off an 18,000
+    # fare beats a 16,287 one, so ranking on the headline price would point at
+    # the wrong day. No seller is known at this stage, so seller-scoped offers
+    # deliberately stay out until a booking link names one.
+    live_offers = offers.active(request.offers)
+    applied: dict[int, offers.Application] = {}
+    if live_offers:
+        for option in outcome.kept:
+            best = offers.best_offer(live_offers, option.total_price)
+            if best is not None:
+                applied[id(option)] = best
+
+    def payable(option) -> Decimal:
+        found = applied.get(id(option))
+        return found.effective_price if found else option.total_price
+
     kept = datespace.bookable_first(
-        datespace.collapse_to_best_per_cell(outcome.kept)
+        datespace.collapse_to_best_per_cell(outcome.kept), payable
     )
     removed = {
         reason: removed.get(reason, 0) + outcome.removed.get(reason, 0)
@@ -218,8 +234,10 @@ async def search(request: SearchRequest) -> SearchResponse:
                 else None
             ),
             return_date=option.return_date,
+            effective_price=payable(option),
+            offer_label=applied[id(option)].label if id(option) in applied else None,
         )
-        for option in _cheapest_per_depart_date(kept)
+        for option in _cheapest_per_depart_date(kept, payable)
     ]
 
     shown = kept[: request.limit]
@@ -229,7 +247,13 @@ async def search(request: SearchRequest) -> SearchResponse:
         contexts = await _price_contexts(store, spec, shown)
 
     results = [
-        TripOptionOut.of(o, spec.passengers, contexts.get(id(o)), request.wallet)
+        TripOptionOut.of(
+            o,
+            spec.passengers,
+            contexts.get(id(o)),
+            request.wallet,
+            applied.get(id(o)),
+        )
         for o in shown
     ]
 
@@ -445,10 +469,11 @@ def _split_ticket_saving(options: list) -> SplitTicketSaving | None:
     )
 
 
-def _cheapest_per_depart_date(options: list) -> list:
+def _cheapest_per_depart_date(options: list, price_of=None) -> list:
+    price = price_of or (lambda o: o.total_price)
     best: dict = {}
     for option in options:
         current = best.get(option.depart_date)
-        if current is None or option.total_price < current.total_price:
+        if current is None or price(option) < price(current):
             best[option.depart_date] = option
     return sorted(best.values(), key=lambda o: o.depart_date)

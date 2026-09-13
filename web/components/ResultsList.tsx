@@ -448,14 +448,39 @@ export default function ResultsList({
                 </div>
 
                 <div className="text-right">
-                  <div className="text-lg font-semibold">
-                    {formatMoney(option.total_price, currency)}
-                  </div>
+                  {option.applied_offer ? (
+                    <>
+                      <div className="text-lg font-semibold text-emerald-300">
+                        {formatMoney(
+                          option.applied_offer.effective_price,
+                          currency,
+                        )}
+                      </div>
+                      <div className="text-[11px] text-muted line-through">
+                        {formatMoney(option.total_price, currency)}
+                      </div>
+                    </>
+                  ) : (
+                    <div className="text-lg font-semibold">
+                      {formatMoney(option.total_price, currency)}
+                    </div>
+                  )}
                   <div className="text-[11px] text-muted">
                     {option.is_live_quote
                       ? "live quote"
                       : `seen ${relativeAge(option.observed_at)}`}
                   </div>
+                  {option.applied_offer && (
+                    <div
+                      className={`mt-1 text-[11px] ${
+                        option.applied_offer.expiring_soon
+                          ? "text-amber-300"
+                          : "text-emerald-300/80"
+                      }`}
+                    >
+                      {option.applied_offer.note}
+                    </div>
+                  )}
 
                   {option.is_live_quote && option.provider_ref ? (
                     <BookingPanel option={option} currency={currency} />

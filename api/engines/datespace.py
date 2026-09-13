@@ -11,7 +11,8 @@ from __future__ import annotations
 
 from collections import defaultdict
 from datetime import date, timedelta
-from typing import Iterable, Sequence
+from decimal import Decimal
+from typing import Callable, Iterable, Sequence
 
 from api.domain import DateRange, FareRow, TripOption
 
@@ -143,7 +144,10 @@ def collapse_to_best_per_cell(options: Iterable[TripOption]) -> list[TripOption]
     return sorted(best.values(), key=lambda opt: (opt.total_price, opt.depart_date))
 
 
-def bookable_first(options: Iterable[TripOption]) -> list[TripOption]:
+def bookable_first(
+    options: Iterable[TripOption],
+    price_of: Callable[[TripOption], Decimal] | None = None,
+) -> list[TripOption]:
     """Rank verified quotes above estimates, each group by price.
 
     Sorting purely by price puts unverified cached estimates at the top, because
@@ -156,10 +160,15 @@ def bookable_first(options: Iterable[TripOption]) -> list[TripOption]:
     So a fare that has been priced for real leads, even when a cheaper estimate
     exists. The estimate is still shown, still labelled, and can be priced on
     demand — it is a lead, not an offer.
+
+    `price_of` lets the caller rank on the price actually payable rather than the
+    headline. A card discount can make a pricier fare the cheaper one, and a
+    ranking that ignored that would point at the wrong day.
     """
+    price = price_of or (lambda opt: opt.total_price)
     return sorted(
         options,
-        key=lambda opt: (not opt.is_live_quote, opt.total_price, opt.depart_date),
+        key=lambda opt: (not opt.is_live_quote, price(opt), opt.depart_date),
     )
 
 
