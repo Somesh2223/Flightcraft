@@ -15,8 +15,10 @@ import {
   SearchRequest,
   SearchResponse,
   Offer,
+  SearchEstimate,
   TripOption,
   Wallet,
+  estimateSearch,
   formatMoney,
   resolveDate,
   search,
@@ -92,11 +94,29 @@ export default function Home() {
   // server and reading it in the initial state would break hydration.
   const [wallet, setWallet] = useState<Wallet>({ holdings: [] });
   const [offers, setOffers] = useState<Offer[]>([]);
+  const [estimate, setEstimate] = useState<SearchEstimate | null>(null);
 
   useEffect(() => {
     setWallet(loadWallet());
     setOffers(loadOffers());
   }, []);
+
+  // Live pricing is the only part that costs money, so the count is shown
+  // before the search rather than after it.
+  useEffect(() => {
+    let stale = false;
+    estimateSearch({
+      origin: origin.trim().toUpperCase() || "DEL",
+      destination: destination.trim().toUpperCase() || "BOM",
+      outbound: { start: outStart, end: outEnd },
+      inbound: wantsReturn ? { start: inStart, end: inEnd } : null,
+    })
+      .then((e) => !stale && setEstimate(e))
+      .catch(() => !stale && setEstimate(null));
+    return () => {
+      stale = true;
+    };
+  }, [origin, destination, outStart, outEnd, wantsReturn, inStart, inEnd]);
 
   function toggleClass(value: CarrierClass) {
     setClasses((current) =>
@@ -226,6 +246,13 @@ export default function Home() {
   }, [data, selectedDate]);
 
   const removed = data ? Object.entries(data.filtered_out) : [];
+
+  /** Filters that can only be judged on a date priced for real. */
+  const airlineFilterActive =
+    airlines.trim() !== "" ||
+    classes.length > 0 ||
+    bodies.length > 0 ||
+    retiringOnly;
 
   return (
     <main className="mx-auto max-w-6xl px-6 py-10">
@@ -400,6 +427,22 @@ export default function Home() {
                 </option>
               ))}
             </select>
+            {estimate && (
+              <span className="mt-1 block text-xs text-muted">
+                {estimate.depths[depth].live_requests === 0
+                  ? `Estimates only across ${estimate.dates_in_window} dates — no live pricing.`
+                  : `Prices ${estimate.depths[depth].live_requests} of ${estimate.dates_in_window} dates for real.`}
+                {airlineFilterActive &&
+                  estimate.depths[depth].live_requests <
+                    estimate.dates_in_window && (
+                    <span className="text-amber-300">
+                      {" "}
+                      Airline and aircraft filters only match priced dates — Deep
+                      covers more of the month.
+                    </span>
+                  )}
+              </span>
+            )}
           </Field>
         </div>
 

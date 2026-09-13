@@ -7,9 +7,16 @@ import httpx
 import pytest
 import respx
 
-from api.domain import DateRange, FareRow, SearchSpec, Segment, TripOption
+from api.domain import (
+    CarrierClass,
+    DateRange,
+    FareRow,
+    SearchSpec,
+    Segment,
+    TripOption,
+)
 from api.engines import datespace
-from api.pipeline import resolve
+from api.pipeline import filters, resolve
 from api.pipeline.filters import FilterSet
 from api.pipeline.scan import ScanDepth
 from api.providers.ignav import IgnavClient
@@ -278,6 +285,137 @@ class TestSplitTicketSaving:
         )[0]
 
         assert _split_ticket_saving([estimate, self._live_return(39243)]) is None
+
+
+class TestFilterOrder:
+    """Live fares must be filtered per row, before the collapse to one option
+    per date. Doing it the other way judges a date by a fare the traveller
+    already ruled out."""
+
+    def _same_day(self) -> list[FareRow]:
+        # Gulf Air is full service and cheapest; IndiGo is budget and dearer.
+        return [
+            live_row("2026-10-04", 16287, carrier="GF"),
+            live_row("2026-10-04", 16803, carrier="6E"),
+        ]
+
+    def test_the_budget_fare_survives_a_budget_filter(self):
+        wanted = FilterSet(carrier_classes={CarrierClass.LOW_COST})
+
+        kept, _ = filters.apply_to_rows(self._same_day(), wanted)
+        options = datespace.collapse_to_best_per_cell(
+            datespace.build_options(kept, None)
+        )
+
+        assert [o.outbound.airline for o in options] == ["6E"]
+
+    def test_collapsing_first_would_have_lost_the_date_entirely(self):
+        wanted = FilterSet(carrier_classes={CarrierClass.LOW_COST})
+
+        collapsed_first = datespace.collapse_to_best_per_cell(
+            datespace.build_options(self._same_day(), None)
+        )
+        outcome = filters.apply(collapsed_first, wanted)
+
+        assert collapsed_first[0].outbound.airline == "GF"
+        assert outcome.kept == []
+
+    def test_an_airline_filter_behaves_the_same_way(self):
+        wanted = FilterSet(include_airlines={"6E"})
+
+        kept, _ = filters.apply_to_rows(self._same_day(), wanted)
+        options = datespace.collapse_to_best_per_cell(
+            datespace.build_options(kept, None)
+        )
+
+        assert len(options) == 1
+        assert options[0].total_price == Decimal(16803)
+
+
+class TestTargeting:
+    """Cheapest-first targeting assumes the cached landscape predicts where the
+    good fares are. An airline filter breaks that assumption."""
+
+    def _month(self) -> list[TripOption]:
+        # Cheapest days clustered at the start, as one carrier undercutting the
+        # route would make them look.
+        return [
+            TripOption.from_fare(cached_row(f"2026-10-{d:02d}", 15000 + d * 200))
+            for d in range(1, 29)
+        ]
+
+    def test_without_an_airline_filter_the_cheapest_dates_win(self):
+        cells = resolve.candidate_cells(self._month(), limit=4)
+
+        assert [c[0].day for c in cells] == [1, 2, 3, 4]
+
+    def test_an_airline_filter_spreads_across_the_window(self):
+        cells = resolve.spread_cells(self._month(), limit=4)
+
+        days = [c[0].day for c in cells]
+        assert days == [1, 8, 15, 22]
+
+    def test_spreading_never_exceeds_what_exists(self):
+        cells = resolve.spread_cells(self._month(), limit=100)
+
+        assert len(cells) == 28
+
+    def test_spreading_an_empty_month_is_safe(self):
+        assert resolve.spread_cells([], limit=5) == []
+
+    @respx.mock
+    async def test_an_airline_filter_makes_the_plan_spread(self, spec):
+        route = respx.post(f"{BASE}/fares/one-way").mock(
+            side_effect=echoing_one_way(16803.0)
+        )
+        options = [
+            TripOption.from_fare(cached_row(f"2026-10-{d:02d}", 15000 + d * 200))
+            for d in range(1, 29)
+        ]
+
+        async with IgnavClient(api_key="k", base_url=BASE) as client:
+            await resolve.resolve(
+                client,
+                spec,
+                options,
+                ScanDepth.STANDARD,
+                FilterSet(include_airlines={"6E"}),
+                limit=4,
+            )
+
+        import json
+
+        asked = sorted(
+            json.loads(c.request.content)["departure_date"] for c in route.calls
+        )
+        assert asked == ["2026-10-01", "2026-10-08", "2026-10-15", "2026-10-22"]
+
+    @respx.mock
+    async def test_a_carrier_class_filter_also_spreads(self, spec):
+        route = respx.post(f"{BASE}/fares/one-way").mock(
+            side_effect=echoing_one_way(16803.0)
+        )
+        options = [
+            TripOption.from_fare(cached_row(f"2026-10-{d:02d}", 15000 + d * 200))
+            for d in range(1, 29)
+        ]
+
+        async with IgnavClient(api_key="k", base_url=BASE) as client:
+            await resolve.resolve(
+                client,
+                spec,
+                options,
+                ScanDepth.STANDARD,
+                FilterSet(carrier_classes={CarrierClass.LOW_COST}),
+                limit=4,
+            )
+
+        import json
+
+        asked = sorted(
+            json.loads(c.request.content)["departure_date"] for c in route.calls
+        )
+        assert asked[0] == "2026-10-01" and asked[-1] == "2026-10-22"
 
 
 class TestMerge:

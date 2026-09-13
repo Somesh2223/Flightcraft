@@ -196,6 +196,14 @@ def estimate_calls(spec: SearchSpec, depth: ScanDepth) -> int:
     return total
 
 
+def dates_in_window(spec: SearchSpec) -> int:
+    """Distinct departure dates a full sweep would have to price."""
+    total = len(spec.outbound)
+    if spec.inbound is not None:
+        total += len(spec.inbound)
+    return total
+
+
 def widest_span(*spans: DateRange | None) -> DateRange | None:
     present = [s for s in spans if s is not None]
     if not present:

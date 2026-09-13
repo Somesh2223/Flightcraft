@@ -18,7 +18,7 @@ from api.engines import datespace, history, offers, points
 from api.jobs import popular
 from api.pipeline import filters, resolve
 from api.pipeline.filters import FilterSet
-from api.pipeline.scan import ScanDepth, estimate_calls, scan
+from api.pipeline.scan import ScanDepth, dates_in_window, estimate_calls, scan
 from api.providers.demo import DemoClient
 from api.providers.ignav import IgnavClient, IgnavError
 from api.providers.travelpayouts import TravelpayoutsClient, TravelpayoutsError
@@ -136,6 +136,7 @@ async def search(request: SearchRequest) -> SearchResponse:
     resolved_cells: list = []
     live_requests = 0
     live_cache_hits = 0
+    resolution: resolve.ResolveResult | None = None
     if config.IGNAV_API_KEY and not config.DEMO_MODE:
         async with IgnavClient() as ignav:
             resolution = await resolve.resolve(
@@ -147,14 +148,10 @@ async def search(request: SearchRequest) -> SearchResponse:
         # Collapsed per kind, not per cell: a round-trip ticket and a pair of
         # one-ways covering the same dates are different products, and keeping
         # only the cheaper would erase the comparison between them.
-        live_options = datespace.collapse_to_best_per_cell(
-            assemble(
-                resolution.outbound_rows,
-                resolution.inbound_rows if spec.is_return else None,
-            )
-        ) + datespace.collapse_to_best_per_cell(
-            [TripOption.from_fare(r) for r in resolution.round_trip_rows]
-        )
+        live_options = _live_options(resolution, spec, assemble)
+        # Cells we paid to price, taken before any filtering. A date whose only
+        # matching fare was filtered out must not fall back to its cached
+        # estimate: we know what flies that day, and the estimate does not.
         resolved_cells = resolve.cells_of(live_options)
         live_requests = resolution.requests
         live_cache_hits = resolution.cached_cells
@@ -190,8 +187,32 @@ async def search(request: SearchRequest) -> SearchResponse:
     cached_options = datespace.collapse_to_best_per_cell(
         assemble(kept_outbound, kept_inbound)
     )
+
+    # Live fares get the same row-level filtering, and for the same reason. The
+    # collapse above keeps one option per date, so filtering after it would
+    # judge a date by a fare the traveller already ruled out — a budget-only
+    # search on a day where Gulf Air is cheapest and IndiGo also flies would
+    # drop the day entirely rather than offer the IndiGo seat.
+    filtered_live = live_options
+    if resolution is not None and not filter_set.is_empty:
+        live_out, live_removed = filters.apply_to_rows(
+            resolution.outbound_rows, filter_set
+        )
+        live_in, live_in_removed = (
+            filters.apply_to_rows(resolution.inbound_rows, filter_set)
+            if spec.is_return
+            else ([], {})
+        )
+        live_rt, live_rt_removed = filters.apply_to_rows(
+            resolution.round_trip_rows, filter_set
+        )
+        filtered_live = _assemble_live(live_out, live_in, live_rt, spec, assemble)
+        for counts in (live_removed, live_in_removed, live_rt_removed):
+            for reason, count in counts.items():
+                removed[reason] = removed.get(reason, 0) + count
+
     outcome = filters.apply(
-        resolve.merge(cached_options, live_options, resolved_cells), filter_set
+        resolve.merge(cached_options, filtered_live, resolved_cells), filter_set
     )
     # Measured before collapsing, because collapsing keeps only the cheapest
     # option per cell — which deletes the round-trip ticket exactly when the
@@ -401,8 +422,19 @@ async def search_estimate(request: SearchRequest) -> dict:
         max_nights=request.max_nights,
         currency=request.currency,
     )
+    # Live requests are the only part that costs money, so they are reported
+    # separately rather than folded into a single opaque number.
     return {
-        depth.value: estimate_calls(spec, depth) for depth in ScanDepth
+        "dates_in_window": dates_in_window(spec),
+        "depths": {
+            depth.value: {
+                "cached_calls": estimate_calls(spec, depth),
+                "live_requests": min(
+                    resolve.RESOLVE_LIMITS.get(depth, 0), dates_in_window(spec)
+                ),
+            }
+            for depth in ScanDepth
+        },
     }
 
 
@@ -439,6 +471,25 @@ async def _price_contexts(store, spec, options: list) -> dict[int, object]:
             )
 
     return contexts
+
+
+def _assemble_live(outbound, inbound, round_trips, spec, assemble) -> list:
+    """Options from live rows, collapsed per kind rather than per cell."""
+    return datespace.collapse_to_best_per_cell(
+        assemble(outbound, inbound if spec.is_return else None)
+    ) + datespace.collapse_to_best_per_cell(
+        [TripOption.from_fare(r) for r in round_trips]
+    )
+
+
+def _live_options(resolution, spec, assemble) -> list:
+    return _assemble_live(
+        resolution.outbound_rows,
+        resolution.inbound_rows,
+        resolution.round_trip_rows,
+        spec,
+        assemble,
+    )
 
 
 def _split_ticket_saving(options: list) -> SplitTicketSaving | None:

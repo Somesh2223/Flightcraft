@@ -312,6 +312,19 @@ export function bookingLinks(providerRef: string): Promise<{ links: BookingLink[
   });
 }
 
+export interface SearchEstimate {
+  dates_in_window: number;
+  depths: Record<ScanDepth, { cached_calls: number; live_requests: number }>;
+}
+
+/** What a search would cost before running it. Free — no provider call. */
+export function estimateSearch(body: SearchRequest): Promise<SearchEstimate> {
+  return request<SearchEstimate>("/api/search/estimate", {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
+}
+
 export function listPrograms(): Promise<{ programs: LoyaltyProgram[] }> {
   return request("/api/loyalty/programs");
 }

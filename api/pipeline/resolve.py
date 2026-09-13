@@ -120,6 +120,42 @@ def candidate_cells(
     return cells
 
 
+def spread_cells(
+    options: list[TripOption], limit: int
+) -> list[tuple[date, date | None]]:
+    """Evenly spaced dates instead of the cheapest-looking ones.
+
+    Cheapest-first targeting assumes the cached landscape predicts where the
+    good fares are. That assumption breaks precisely when someone filters by
+    airline or aircraft: the cheap days in the landscape are cheap because of
+    whichever carrier undercuts the route, which is usually not the one being
+    asked about. Spending the whole budget there would price ten days that share
+    one airline and miss the rest of the month.
+    """
+    cells = sorted({(o.depart_date, o.return_date) for o in options})
+    if limit <= 0 or not cells:
+        return []
+    if len(cells) <= limit:
+        return cells
+    step = len(cells) / limit
+    return [cells[int(i * step)] for i in range(limit)]
+
+
+def spread_dates(options: list[TripOption], limit: int) -> tuple[list[date], list[date]]:
+    out = sorted({o.depart_date for o in options})
+    back = sorted({o.return_date for o in options if o.return_date is not None})
+
+    def pick(days: list[date]) -> list[date]:
+        if limit <= 0 or not days:
+            return []
+        if len(days) <= limit:
+            return days
+        step = len(days) / limit
+        return [days[int(i * step)] for i in range(limit)]
+
+    return pick(out), pick(back)
+
+
 def candidate_dates(
     options: list[TripOption], limit: int
 ) -> tuple[list[date], list[date]]:
@@ -200,7 +236,13 @@ async def resolve(
         return ResolveResult()
 
     filters = _provider_filters(spec, filter_set)
-    jobs = _plan(spec, options, budget)
+    # An airline or aircraft filter makes the cached ranking an unreliable guide
+    # to where that carrier is cheap, so the budget is spread across the window
+    # instead of piled onto the dates that merely look cheapest overall.
+    spread = filter_set is not None and (
+        filter_set.needs_airline or filter_set.needs_aircraft
+    )
+    jobs = _plan(spec, options, budget, spread)
     if not jobs:
         return ResolveResult()
 
@@ -266,9 +308,19 @@ async def resolve(
     return result
 
 
-def _plan(spec: SearchSpec, options: list[TripOption], budget: int) -> list[_Job]:
+def _plan(
+    spec: SearchSpec,
+    options: list[TripOption],
+    budget: int,
+    spread: bool = False,
+) -> list[_Job]:
     """Decide what to spend the budget on."""
     if not spec.is_return:
+        cells = (
+            spread_cells(options, budget)
+            if spread
+            else candidate_cells(options, budget)
+        )
         return [
             _Job(
                 origin=spec.origin,
@@ -276,12 +328,16 @@ def _plan(spec: SearchSpec, options: list[TripOption], budget: int) -> list[_Job
                 depart=depart,
                 lane="outbound",
             )
-            for depart, _ in candidate_cells(options, budget)
+            for depart, _ in cells
         ]
 
     probes = min(ROUND_TRIP_PROBES, max(budget - 2, 0))
     per_direction = max((budget - probes) // 2, 1)
-    out_dates, in_dates = candidate_dates(options, per_direction)
+    out_dates, in_dates = (
+        spread_dates(options, per_direction)
+        if spread
+        else candidate_dates(options, per_direction)
+    )
 
     jobs = [
         _Job(

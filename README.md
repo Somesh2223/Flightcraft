@@ -25,38 +25,61 @@ A single-date search is just a range of length one.
   return fare — and is not expressible on any mainstream site.
 - **Filters that survive the month scan**: max stops, specific airlines,
   carrier type (budget / full service / hybrid), alliance, price cap.
-- **Booking deep-links** to a live search, so the real current price is always
-  one click away.
+- **Aircraft filters** on real equipment — widebody, family, or "fly it before
+  it's gone" for types most fleets are retiring.
+- **Verified fares with the actual flights**: airline, flight number, aircraft,
+  segment times, baggage, and every seller's own price.
 - **Price history**, accumulating from every scan plus a daily sweep of ~24
   popular Indian routes. Each result is scored against what that departure date
   has cost before — good / typical / above usual, and an error-fare flag for
   anything far below its own median.
+- **Points guidance** that values a redemption against the whole month of cash
+  fares, not just the date it sits on.
+- **Card offers** applied *before* ranking, because a discount changes which
+  date is cheapest.
 
-## The data, and its honest limits
+## Two stages, and why
 
-Amadeus shut down its free Self-Service API on 17 July 2026. Kiwi's Tequila is
-invite-only, and Skyscanner and Duffel need commercial agreements. The one
-remaining self-serve, no-cost source of real fare data is the Travelpayouts /
-Aviasales Data API, free with affiliate registration at
-[travelpayouts.com](https://travelpayouts.com).
+Cached data is wide and free but anonymous; live quotes are exact but cost money
+per date. Neither alone is the product, so the app uses both.
 
-Its prices are **cached** — real fares from real recent searches, refreshed
-continuously, but not live quotes. Three consequences, stated plainly:
+**Stage one — the free landscape.** Travelpayouts' cached fares map a whole year
+in one call. Free with affiliate registration at
+[travelpayouts.com](https://travelpayouts.com). It says what a date roughly
+costs and nothing about who flies it.
 
-1. **This is the right tool for month scanning.** A live-quote API physically
-   cannot price two months of dates; that's thousands of priced queries.
-2. **Every price is labelled with when it was observed**, and every result
-   deep-links to a live search where the exact fare is confirmed.
-3. **We accumulate our own price history** as a side effect of scanning, which
-   is what will make "book now or wait" and error-fare detection possible.
+**Stage two — real itineraries.** [Ignav](https://ignav.com) prices specific
+dates live: marketing and operating carrier, flight number, aircraft, segment
+times, cabin, baggage, and booking links with each seller's own price. 1,000
+free requests, then $2 per 1,000 — about ₹2 a search.
+
+The landscape decides where to spend. Every date the traveller asked about still
+appears; the ones worth paying for become real offers and the rest stay labelled
+estimates, priceable on demand for one request.
+
+### Ranking: what you can pay beats what you cannot
+
+Two rules that both cost real correctness if dropped:
+
+1. **A verified fare outranks a cheaper estimate.** Cached prices are
+   systematically optimistic — they are the fares that were cheapest at some
+   point, and cheap ones vanish first. Ranking on price alone put five
+   unbookable estimates at the top of the first live run.
+2. **Offers are applied before ranking, not after.** With "3,000 off above
+   16,500" on DEL-DXB, the 16,287 fare misses the threshold and the 16,803 one
+   pays 13,803. The dearer ticket is the cheaper one.
 
 ### Scan depth is a cost dial
 
-| Depth | Provider calls | What you get |
-|---|---|---|
-| `quick` | 1 per direction | `latest` with `period_type=year` — dated one-way fares across a whole year |
-| `standard` | + 1 per month per direction | Adds `month-matrix`: fresher, and covers some dates `latest` misses |
-| `deep` | + up to 20 | Tries to name airlines for the best date pairs |
+| Depth | Cached calls | Live requests | What you get |
+|---|---|---|---|
+| `quick` | 1 per direction | 0 | Estimates across a whole year, free |
+| `standard` | + 1 per month per direction | up to 10 | The best dates priced for real |
+| `deep` | same | up to 30 | Roughly a month priced for real |
+
+An airline or aircraft filter changes the targeting: the cached ranking is a
+poor guide to where *that* carrier is cheap, so the budget spreads evenly across
+the window instead of piling onto the dates that merely look cheapest.
 
 ### What the live API actually does
 
@@ -133,24 +156,17 @@ Two ordering rules in the pipeline are load-bearing and easy to get wrong:
 
 ## Roadmap
 
-### Airline attribution: the candidate-set approach
+### What is deliberately not in the data files
 
-Travelpayouts will not say which carrier a cached price belongs to. The reference
-data needed to work around it is, however, entirely free:
-
-- **Who flies a route** — Wikipedia airport articles, OpenFlights, OpenSky.
-- **What aircraft operates a flight** — OpenSky ADS-B history, airline schedules.
-- **Carrier class and alliance** — already curated in `api/data/carriers.yaml`.
-
-So rather than claiming a fare belongs to one airline, the plan is to derive the
-**candidate set** for a route and stop count, and say so: *"one of IX, 6E or
-AI"*. The booking deep-link resolves it on click.
-
-This is honest about what is known and still delivers most of the value. "Which
-dates can I fly a widebody on this route" is answerable from schedules alone,
-which is the avgeek case. "The cheapest IndiGo fare in December" narrows to
-"dates where IndiGo is a candidate", which is weaker but useful — and no paid
-API or scraping is involved.
+Award prices and bank transfer ratios are absent from `loyalty.yaml`, and no
+card offers ship at all. All three change constantly, none is published
+machine-readably, and the sources that carry them contradict each other. A
+points transfer is irreversible and a stale offer means booking for a discount
+that never arrives — so the traveller supplies the numbers they can read off
+their own bank's page, and the app does arithmetic on figures that are correct
+by construction. What the files *do* carry is structural and slow-moving: which
+airline owns a programme, which alliance it books, which programmes pool a
+currency.
 
 ### Ordered roughly by value per unit of effort
 
